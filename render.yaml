@@ -2,7 +2,31 @@ services:
   - type: web
     name: fincrimeradar-api
     env: python
-    buildCommand: pip install -r requirements.txt
+    # cases.json sync: this service's Scenario Lab fixture (cases.json) is a
+    # mirror of fincrimeradar/scenario-lab/data/cases.json, not its source of
+    # truth. It went silently stale for six weeks (one commit, 2026-07-07,
+    # never updated through two later module launches on the frontend repo)
+    # before that was caught. This build step re-fetches the frontend repo's
+    # current file on every deploy so a fresh deploy can never ship stale
+    # data on its own. On fetch failure (frontend repo unreachable, rate
+    # limited, etc, a transient externality, not a defect in this service)
+    # it logs a loud warning and falls back to whatever cases.json is
+    # already committed here, per the project's fail-loudly-not-fail-hard
+    # convention: this is exactly the "manual copy" step, automated, not a
+    # health signal worth blocking an otherwise unrelated deploy over. See
+    # .github/workflows/sync-scenario-lab-cases.yml in the fincrimeradar
+    # repo for the other half, the piece that actually triggers a deploy
+    # here when the source file changes, this build step alone only keeps
+    # deploys that happen anyway from being stale.
+    buildCommand: |
+      pip install -r requirements.txt
+      if curl -fsSL -o cases.json.tmp https://raw.githubusercontent.com/FinCrimeRadar/fincrimeradar/main/scenario-lab/data/cases.json; then
+        mv cases.json.tmp cases.json
+        echo "cases.json synced from fincrimeradar main"
+      else
+        rm -f cases.json.tmp
+        echo "WARNING: fincrimeradar-api build: cases.json sync fetch failed, falling back to the committed copy in this repo" >&2
+      fi
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     healthCheckPath: /api/health
