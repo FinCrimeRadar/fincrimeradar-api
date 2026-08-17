@@ -10,6 +10,11 @@
       "request_more_info"
     ],
     "rationale": "The 26 percent stake is routed through a British Virgin Islands shell company, and the ultimate beneficial owner returns a possible sanctions match with a mismatched date of birth. Neither fact alone is sufficient justification, together they require rejection or a request for more information.",
+    "related_guide": {
+      "title": "The Onboarding Dilemma",
+      "url": "/kyc-onboarding-dilemma.html",
+      "reason": "More on judgement calls like this one"
+    },
     "nodes": [
       {
         "id": "n1",
@@ -64,6 +69,11 @@
       "request_more_info"
     ],
     "rationale": "Screening returned no match, but a clean screening result does not close an investigation on its own. The document's MRZ typography does not match standard ICAO passport font, an independent authenticity red flag that screening cannot detect.",
+    "related_guide": {
+      "title": "The Onboarding Dilemma",
+      "url": "/kyc-onboarding-dilemma.html",
+      "reason": "More on document and identity red flags"
+    },
     "nodes": [
       {
         "id": "n1",
@@ -92,6 +102,11 @@
       "approve"
     ],
     "rationale": "Both founders are local and fully verified, and business operations match the public profile. Founder B carries a disclosed PEP connection, correctly identified and weighed rather than overlooked, but screening returns clean and the connection presents low risk. Screening every identified entity returns clean, this remains the case where identification and screening clear without qualification, the PEP status is a factor considered, not a blocker.",
+    "related_guide": {
+      "title": "Methodology",
+      "url": "/methodology.html",
+      "reason": "What a clean screening result actually means"
+    },
     "nodes": [
       {
         "id": "n1",
@@ -142,5 +157,832 @@
         "ownership_pct": 45
       }
     ]
+  },
+  {
+    "case_number": 4,
+    "entity_id": "apex-consulting-004",
+    "name": "Apex Consulting",
+    "title": "Apex Consulting — Storefront Legitimacy Check",
+    "briefing": "An individual registers as a sole trader offering web design consultation services. The registered business address matches a known corporate virtual mailbox provider in London currently hosting over 4,000 active entities. The associated website domain was registered six days ago and consists almost entirely of template placeholder copy with no verifiable client work shown. The applicant's personal identity documents pass all authenticity checks with no discrepancies.",
+    "correct_disposition": [
+      "request_more_info"
+    ],
+    "rationale": "The applicant's own identity is genuine, this is not a document fraud or impersonation case. The risk sits in the business profile itself: a shared virtual mailbox address hosting thousands of unrelated entities, a domain registered days before onboarding, and no evidence of a functioning business behind the registration. This pattern matches known transaction laundering storefronts, shells used to route card-not-present processing volume that has nothing to do with the stated business. The correct action is to request historical processing history, signed client agreements, or other evidence the business genuinely operates before approving payment processing access.",
+    "related_guide": {
+      "title": "Transaction Monitoring",
+      "url": "/tm-guide.html",
+      "reason": "More on spotting transaction laundering patterns"
+    },
+    "nodes": [
+      {
+        "id": "n1",
+        "label": "Apex Consulting (Sole Trader)",
+        "type": "applicant",
+        "jurisdiction": "UK",
+        "flag": "virtual_mailbox_shell_pattern",
+        "screening": {
+          "match_confidence": 0,
+          "list_source": null,
+          "dob_customer": null,
+          "dob_match": null,
+          "result": "no_match"
+        }
+      }
+    ],
+    "edges": []
+  },
+  {
+    "case_number": 5,
+    "entity_id": "horizon-shipping-005",
+    "name": "Horizon Shipping Logistics Ltd",
+    "title": "Horizon Shipping — Relational Sanctions Exposure",
+    "briefing": "A mid-sized shipping logistics operator applies for onboarding. The entity itself screens completely clean against all global sanctions and watchlists. Corporate ownership mapping shows one shareholder, holding a 30% stake, is the adult son of a senior government minister in Ruritania who was designated under an asset-freeze regime eighteen months ago. Direct sanctions screening of the son himself returns no match, he is not named on any designated persons list in his own right.",
+    "correct_disposition": [
+      "request_more_info"
+    ],
+    "rationale": "This case tests whether a clean direct screening result is treated as the end of the analysis or the start of it. The son is not designated, so an automatic reject cannot be justified on sanctions grounds alone, ownership by a family member of a designated person is not itself a listing trigger. But a 30% stake held by the close relative of a currently sanctioned official is a well established nominee and asset-shielding pattern. The correct action is to request further information to establish whether the son is acting as an independent beneficial owner or as a proxy holding the stake on his father's behalf, before any onboarding decision is made. Approving on the strength of a clean screening hit alone ignores the relational risk; rejecting outright on relationship alone is not supported by the facts as they stand.",
+    "related_guide": {
+      "title": "Sanctions Compliance Guide",
+      "url": "/sanctions-compliance-guide.html",
+      "reason": "More on relational sanctions exposure"
+    },
+    "nodes": [
+      {
+        "id": "n1",
+        "label": "Horizon Shipping Logistics Ltd",
+        "type": "applicant",
+        "jurisdiction": "UK",
+        "screening": null
+      },
+      {
+        "id": "n2",
+        "label": "Shareholder (Son of Designated Official)",
+        "type": "individual",
+        "jurisdiction": "Ruritania",
+        "ownership_pct": 30,
+        "flag": "close_associate_of_designated_person",
+        "screening": {
+          "match_confidence": 0,
+          "list_source": null,
+          "dob_customer": null,
+          "dob_match": null,
+          "result": "no_match"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "n2",
+        "to": "n1",
+        "ownership_pct": 30
+      }
+    ]
+  },
+  {
+    "module": "fraud",
+    "case_number": 1,
+    "entity_id": "app-scam-001",
+    "title": "Authorised Push Payment Scam",
+    "briefing": "A customer's account shows a large outbound transfer request. Step through the account activity below, then decide.",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Customer", "color": "teal" },
+        { "id": "n2", "label": "New account", "sublabel": "41 hrs old", "color": "amber" },
+        { "id": "n3", "label": "Under review", "sublabel": "APP scam pattern", "color": "red" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2", "label": "£45,000" },
+        { "from": "n2", "to": "n3" }
+      ]
+    },
+    "timeline": [
+      {
+        "icon": "login",
+        "time": "09:14:02",
+        "title": "Login",
+        "body": "Customer logs in from their usual device. IP and location match prior sessions. Nothing unusual yet.",
+        "risk": 5
+      },
+      {
+        "icon": "transfer",
+        "time": "09:14:55",
+        "title": "Transfer request",
+        "body": "£45,000 outbound transfer requested to a domestic business account. The account was opened 41 hours ago.",
+        "risk": 45
+      },
+      {
+        "icon": "device",
+        "time": "09:15:10",
+        "title": "Device check",
+        "body": "Session originates from the customer's known iPad. Device fingerprint matches history, no spoofing detected.",
+        "risk": 40
+      },
+      {
+        "icon": "message",
+        "time": "09:16:40",
+        "title": "Support chat log",
+        "body": "Customer contacts support mid transfer, sounds panicked, references an urgent \"crypto bond opportunity\" someone told them about.",
+        "risk": 90
+      }
+    ],
+    "disposition_options": [
+      { "key": "approve", "label": "Approve" },
+      { "key": "reject_freeze", "label": "Reject and freeze funds" },
+      { "key": "escalate", "label": "Escalate" }
+    ],
+    "correct_disposition": ["reject_freeze"],
+    "rationale": "Every individual signal here looks clean in isolation, that's exactly what makes this pattern dangerous. Biometrics and device fingerprint are genuine. The risk sits entirely in the behavioural pattern: a large, urgent transfer to a brand-new account, combined with a support call describing textbook social-engineering language. This is precisely the scenario the UK's mandatory APP fraud reimbursement regime was built around. Since 7 October 2024, payment providers have been required to reimburse eligible APP scam victims up to £85,000, with the cost split 50/50 between the sending and receiving payment provider. The Payment Systems Regulator's own independent evaluation, published 1 July 2026, found the policy cut in-scope Faster Payments scam losses by roughly £73m a year. That regime exists precisely because catching this pattern before the money moves is now a direct, shared financial liability for the firm, not just a customer protection nicety. Freezing the transfer here isn't just good practice, it's the decision the regulatory framework is actively designed to reward.",
+    "related_guide": {
+      "title": "Fraud Red Flags: Reading the Patterns, Not Just the Rules",
+      "url": "/fraud-red-flags-guide.html",
+      "reason": "Work through the APP scam pattern as a decision scenario"
+    }
+  },
+  {
+    "module": "fraud",
+    "case_number": 2,
+    "entity_id": "session-hijack-002",
+    "title": "Session Hijacking and Impossible Travel",
+    "briefing": "A customer's account shows two checkout sessions within minutes of each other. Step through the account activity below, then decide.",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Customer", "sublabel": "London", "color": "teal" },
+        { "id": "n2", "label": "New device", "sublabel": "Lagos, Nigeria", "color": "amber" },
+        { "id": "n3", "label": "Under review", "sublabel": "Impossible travel", "color": "red" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2", "label": "4 min later" },
+        { "from": "n2", "to": "n3" }
+      ]
+    },
+    "timeline": [
+      {
+        "icon": "cash",
+        "time": "14:02:10",
+        "title": "Ordinary purchase",
+        "body": "Customer completes a routine low-value transaction from their usual session, familiar device, familiar London-based IP. Nothing unusual.",
+        "risk": 5
+      },
+      {
+        "icon": "login",
+        "time": "14:05:44",
+        "title": "Password changed",
+        "body": "Account password is modified, roughly three and a half minutes after the first transaction and shortly before the next event.",
+        "risk": 40
+      },
+      {
+        "icon": "transfer",
+        "time": "14:06:10",
+        "title": "Second checkout attempt",
+        "body": "A £2,400 checkout request for micro-token digital gift vouchers is initiated four minutes after the first transaction, from an Android device on a residential proxy IP geolocating to Lagos, Nigeria.",
+        "risk": 75
+      },
+      {
+        "icon": "device",
+        "time": "14:06:12",
+        "title": "Geolocation check",
+        "body": "The gap between the two sessions is physically impossible to travel in the time elapsed. Device fingerprint also changed entirely between the two transactions.",
+        "risk": 95
+      }
+    ],
+    "disposition_options": [
+      { "key": "approve", "label": "Approve" },
+      { "key": "reject_kill_session", "label": "Reject and kill session" },
+      { "key": "escalate", "label": "Escalate" }
+    ],
+    "correct_disposition": ["reject_kill_session"],
+    "rationale": "Three independent signals point the same direction. A password change immediately before a high-value transaction attempt is a classic account takeover marker, not routine account hygiene. The geographic jump from London to Lagos inside minutes is not physically possible, this is textbook impossible travel, a strong, well-established indicator that the second session belongs to someone other than the account holder. Digital gift vouchers specifically are a common cash-out mechanism in account takeover fraud, they convert stolen access into a liquid, hard-to-trace asset almost immediately. The correct action is to kill the session and force step-up, out-of-band verification before anything proceeds, not just decline the single transaction, since the account itself is compromised, not just this one checkout attempt.",
+    "related_guide": {
+      "title": "Fraud Red Flags: Reading the Patterns, Not Just the Rules",
+      "url": "/fraud-red-flags-guide.html",
+      "reason": "Work through the impossible travel pattern as a decision scenario"
+    }
+  },
+  {
+    "module": "fraud",
+    "case_number": 3,
+    "entity_id": "storefront-mimicry-003",
+    "title": "Transaction Laundering (Digital Storefront Mimicry)",
+    "briefing": "A small merchant account shows an unusual overnight spike in processing volume. Step through the account activity below, then decide.",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Candle shop", "color": "teal" },
+        { "id": "n2", "label": "Anomalous transactions", "sublabel": "£500-£2,500, 1-4am", "color": "amber" },
+        { "id": "n3", "label": "Under review", "sublabel": "Card testing 65%+", "color": "red" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2", "label": "1,200% surge" },
+        { "from": "n2", "to": "n3" }
+      ]
+    },
+    "timeline": [
+      {
+        "icon": "cash",
+        "time": "Baseline, prior weeks",
+        "title": "Normal trading pattern",
+        "body": "A small merchant account, registered as a handmade candle retailer, processes a steady, low volume of transactions in the £15 to £40 range, consistent with its stated business, during normal daytime hours.",
+        "risk": 5
+      },
+      {
+        "icon": "transfer",
+        "time": "Saturday, 00:40",
+        "title": "Volume surge",
+        "body": "Processing volume begins climbing sharply overnight, eventually reaching roughly 1,200% above the account's established baseline for the weekend.",
+        "risk": 45
+      },
+      {
+        "icon": "cash",
+        "time": "Saturday, 01:15 to 04:00",
+        "title": "Anomalous transaction values",
+        "body": "Transaction values shift entirely away from the merchant's normal retail pricing, round figures of £500, £1,000, and £2,500 begin appearing, nothing resembling candle retail pricing.",
+        "risk": 70
+      },
+      {
+        "icon": "device",
+        "time": "Saturday, 03:40",
+        "title": "Card testing signal",
+        "body": "International card authorisation failure rate for this merchant exceeds 65% during the same overnight window, consistent with stolen card numbers being tested for validity before a larger fraudulent charge.",
+        "risk": 95
+      }
+    ],
+    "disposition_options": [
+      { "key": "approve", "label": "Approve" },
+      { "key": "reject_suspend", "label": "Reject and suspend merchant" },
+      { "key": "request_more_info", "label": "Request more information" }
+    ],
+    "correct_disposition": ["reject_suspend"],
+    "rationale": "Every element of this pattern is inconsistent with the merchant's stated business, small-value handmade goods sold during normal hours. Round, high-value transaction amounts appearing overnight are the classic tell of transaction laundering, a storefront that looks legitimate on paper being used to process payments for a completely different, often illicit business the card networks would otherwise decline to onboard directly. The card testing failure rate above 65% adds a second, distinct risk layer on top: this account is very likely also being used to validate stolen card numbers before they're used elsewhere, a pattern often called carding. Two separate fraud typologies converging on one merchant account in the same overnight window isn't a coincidence worth waiting on, it's grounds to suspend the account and investigate before further volume passes through it.",
+    "related_guide": {
+      "title": "Fraud Red Flags: Reading the Patterns, Not Just the Rules",
+      "url": "/fraud-red-flags-guide.html",
+      "reason": "Work through the transaction laundering pattern as a decision scenario"
+    }
+  },
+  {
+    "module": "fraud",
+    "case_number": 4,
+    "entity_id": "structuring-004",
+    "title": "Structuring (Smurfing)",
+    "briefing": "A dormant personal account suddenly receives a rapid sequence of cash deposits. Step through the deposit history below, then decide.",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Deposit 1", "sublabel": "£2,400", "color": "teal" },
+        { "id": "n2", "label": "Deposit 2", "sublabel": "£2,350", "color": "teal" },
+        { "id": "n3", "label": "Deposit 3", "sublabel": "£2,480", "color": "teal" },
+        { "id": "n4", "label": "Deposit 4", "sublabel": "£2,290", "color": "teal" },
+        { "id": "n5", "label": "Deposit 5", "sublabel": "£2,410", "color": "teal" },
+        { "id": "n6", "label": "Dormant account", "color": "amber" },
+        { "id": "n7", "label": "Under review", "sublabel": "Structuring pattern", "color": "red" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n6" },
+        { "from": "n2", "to": "n6" },
+        { "from": "n3", "to": "n6" },
+        { "from": "n4", "to": "n6" },
+        { "from": "n5", "to": "n6" },
+        { "from": "n6", "to": "n7", "label": "5 deposits, 36 hrs" }
+      ]
+    },
+    "timeline": [
+      {
+        "icon": "cash",
+        "time": "Day 1, 10:02",
+        "title": "First deposit",
+        "body": "A dormant personal current account, minimal transaction history for the past 14 months, receives a cash deposit of £2,400 at a branch ATM.",
+        "risk": 15
+      },
+      {
+        "icon": "cash",
+        "time": "Day 1, 15:40",
+        "title": "Second deposit",
+        "body": "A second cash deposit of £2,350 is made at a different ATM location, in the same municipal area.",
+        "risk": 35
+      },
+      {
+        "icon": "cash",
+        "time": "Day 2, 09:15",
+        "title": "Two further deposits",
+        "body": "Two further cash deposits, £2,480 and £2,290, are made within the same morning at two more separate ATM locations.",
+        "risk": 60
+      },
+      {
+        "icon": "cash",
+        "time": "Day 2, 14:20",
+        "title": "Fifth deposit",
+        "body": "A fifth deposit of £2,410 completes the pattern: five deposits totalling £11,930 across five distinct locations inside roughly 36 hours, none individually large enough to be conspicuous on its own.",
+        "risk": 85
+      }
+    ],
+    "disposition_options": [
+      { "key": "approve", "label": "Approve" },
+      { "key": "escalate_sar", "label": "Reject and escalate for SAR filing" },
+      { "key": "request_more_info", "label": "Request more information" }
+    ],
+    "correct_disposition": ["escalate_sar"],
+    "rationale": "There is no automatic reporting threshold in UK law the way there is in the US, UK AML runs on suspicion-based reporting under POCA 2002, not a fixed currency transaction trigger. What matters here is the pattern itself: a dormant account suddenly receiving a rapid sequence of cash deposits, each kept below a round, conspicuous figure, spread deliberately across multiple locations in a short window. That's a classic structuring pattern regardless of any specific threshold, the deliberate fragmentation and geographic spread across the account's otherwise dormant history is itself the red flag POCA's suspicion-based regime is built to catch. The correct action is to escalate for a Suspicious Activity Report, the analyst doesn't need the deposits to cross any specific number to form a reasonable suspicion, they need the pattern, and this one is textbook.",
+    "related_guide": {
+      "title": "Fraud Red Flags: Reading the Patterns, Not Just the Rules",
+      "url": "/fraud-red-flags-guide.html",
+      "reason": "Work through the structuring pattern as a decision scenario"
+    }
+  },
+  {
+    "module": "fraud",
+    "case_number": 5,
+    "entity_id": "synthetic-identity-005",
+    "title": "The Franken-ID",
+    "briefing": "A new account application returns four independent verification results. These are not a sequence, they all exist at once. Reveal each check below, in any order, then decide.",
+    "layout": "cross_reference",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Applicant", "color": "teal" },
+        { "id": "n2", "label": "National ID record", "sublabel": "Belongs to deceased individual", "color": "red" },
+        { "id": "n3", "label": "Address record", "sublabel": "Different living person", "color": "red" },
+        { "id": "n4", "label": "Biometric database", "sublabel": "Zero history", "color": "red" },
+        { "id": "n5", "label": "Credit bureau", "sublabel": "Passed standard check", "color": "teal" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n1", "to": "n3" },
+        { "from": "n1", "to": "n4" },
+        { "from": "n1", "to": "n5" }
+      ]
+    },
+    "cross_reference_facts": [
+      {
+        "icon": "id",
+        "title": "National ID check",
+        "body": "The national identification number provided matches an official government record, but that record belongs to an individual who died three years ago."
+      },
+      {
+        "icon": "home",
+        "title": "Address check",
+        "body": "The residential address on file is currently registered to a different living person, with no family, marital, or historical connection to the applicant discoverable in public records."
+      },
+      {
+        "icon": "biometric",
+        "title": "Biometric check",
+        "body": "The submitted facial biometric returns zero historical matches across any available dataset, no prior photographs, no earlier account registrations, no public sighting anywhere. A genuine adult identity almost always has some digital footprint by this point."
+      },
+      {
+        "icon": "credit",
+        "title": "Credit bureau check",
+        "body": "Standard credit bureau verification passed cleanly, the applicant's declared name and date of birth returned a valid, unflagged credit file."
+      }
+    ],
+    "disposition_options": [
+      { "key": "approve", "label": "Approve" },
+      { "key": "reject", "label": "Reject" },
+      { "key": "request_more_info", "label": "Request further information" }
+    ],
+    "correct_disposition": ["reject"],
+    "rationale": "Each individual fact here can look explainable in isolation, but three components sourced from three separate, unconnected real identities do not combine into one coherent person. This is synthetic identity fraud in its classic form, sometimes called a Franken-ID, genuine identity fragments, often including a real ID number belonging to someone deceased or otherwise unaware, stitched together with an unrelated address and a freshly built credit history to create something that looks real to a single-source check. The clean credit bureau result here isn't reassurance, it's expected. Synthetic identities are specifically built to pass exactly that kind of single-source verification, that's the entire mechanism of the fraud, not a coincidence. The disqualifying evidence only appears once you cross-reference the separately sourced identity components against each other, which is exactly why this typology defeats verification approaches that check one source at a time and stop.",
+    "related_guide": {
+      "title": "Synthetic Identity and Device-Network Fraud: Two Different Problems People Treat as One",
+      "url": "/synthetic-identity-device-network-guide.html",
+      "reason": "Work through The Clean File and The Borrowed Thread as decision scenarios"
+    }
+  },
+  {
+    "module": "fraud",
+    "case_number": 6,
+    "entity_id": "device-network-006",
+    "title": "The Device Network",
+    "briefing": "A customer disputes a high-value electronics order as an empty-box claim. Four related facts already exist, they only become alarming once cross-referenced. Reveal each fact below, in any order, then decide.",
+    "layout": "cross_reference",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Device fingerprint", "color": "amber" },
+        { "id": "n2", "label": "Account A", "sublabel": "Empty-box claim", "color": "red" },
+        { "id": "n3", "label": "Account B", "sublabel": "Empty-box claim", "color": "red" },
+        { "id": "n4", "label": "Account C", "sublabel": "Empty-box claim", "color": "red" },
+        { "id": "n5", "label": "Account D", "sublabel": "Empty-box claim", "color": "red" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n1", "to": "n3" },
+        { "from": "n1", "to": "n4" },
+        { "from": "n1", "to": "n5" }
+      ]
+    },
+    "cross_reference_facts": [
+      {
+        "icon": "device",
+        "title": "Device fingerprint",
+        "body": "The exact hardware and browser fingerprint used to file this dispute has been linked to four separate customer accounts over the past 60 days."
+      },
+      {
+        "icon": "home",
+        "title": "Shipping address",
+        "body": "All four accounts shipped their orders to the identical delivery coordinates, down to the specific building entrance code."
+      },
+      {
+        "icon": "pattern",
+        "title": "Claim pattern",
+        "body": "Every one of the four accounts filed an identical dispute, a high-value electronics order arriving in an empty or tampered box, shortly after delivery confirmation."
+      },
+      {
+        "icon": "network",
+        "title": "Account creation pattern",
+        "body": "All four accounts were created using different but visibly adjacent email address patterns and different but sequentially issued payment card numbers, consistent with one individual deliberately fragmenting their identity across multiple accounts."
+      }
+    ],
+    "disposition_options": [
+      { "key": "approve", "label": "Approve the claim" },
+      { "key": "reject_terminate_network", "label": "Reject and terminate the account network" },
+      { "key": "reject_claim_only", "label": "Reject this claim only, leave other accounts open" }
+    ],
+    "correct_disposition": ["reject_terminate_network"],
+    "rationale": "A single empty-box claim from one customer, taken alone, is routine and should generally be honoured, most such claims are genuine. But four accounts converging on the same device, the same shipping address, and the identical claim pattern inside a 60 day window isn't coincidence, it's a deliberate, systematic pattern of first-party fraud, sometimes called friendly fraud or refund abuse, executed at a network level rather than as an isolated transaction. Rejecting only the flagged claim while leaving the other three accounts open, the option that looks proportionate at first glance, leaves the underlying device and the pattern itself free to keep operating. The correct scope of action has to match the actual scope of the fraud, network-wide, not transaction-wide.",
+    "related_guide": {
+      "title": "Synthetic Identity and Device-Network Fraud: Two Different Problems People Treat as One",
+      "url": "/synthetic-identity-device-network-guide.html",
+      "reason": "Work through The Shared Device as a decision scenario"
+    }
+  },
+  {
+    "module": "risk_scoring",
+    "case_number": 1,
+    "entity_id": "risk-country-flag-101",
+    "name": "Meridian Textiles Wholesale",
+    "title": "The Country Flag That Is Not the Risk",
+    "briefing": "Meridian Textiles Wholesale has an established banking relationship with a supplier based in a jurisdiction on the FATF Call for Action list. The bank is currently reviewing an outbound trade payment to that supplier. Review the signals below, then decide.",
+    "layout": "cross_reference",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Meridian Textiles", "color": "teal" },
+        { "id": "n2", "label": "High risk third country link", "sublabel": "MLR 2017 reg 33", "color": "amber" },
+        { "id": "n3", "label": "Source of funds", "sublabel": "Documented", "color": "teal" },
+        { "id": "n4", "label": "Adverse media check", "sublabel": "Weak namesake match", "color": "amber" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n1", "to": "n3" },
+        { "from": "n1", "to": "n4" }
+      ]
+    },
+    "cross_reference_facts": [
+      {
+        "icon": "network",
+        "title": "High risk third country connection",
+        "body": "The customer's main supplier is based in a jurisdiction on the UK's list of high risk third countries under MLR 2017. This connection engages the mandatory Enhanced Due Diligence requirement under regulation 33, on its own, regardless of anything else in the file."
+      },
+      {
+        "icon": "cash",
+        "title": "Transaction volumes",
+        "body": "Payments to the supplier are small relative to the customer's turnover and have stayed consistent, month on month, for the eighteen months since the relationship was opened."
+      },
+      {
+        "icon": "credit",
+        "title": "Source of funds",
+        "body": "Source of funds is transparent and fully documented: retail sales receipts from three established UK outlets, reconciled against VAT filings."
+      },
+      {
+        "icon": "pattern",
+        "title": "Economic rationale",
+        "body": "The supplier relationship matches the customer's stated business, wholesale textile import, and the goods received match customs declarations."
+      },
+      {
+        "icon": "id",
+        "title": "Adverse media check",
+        "body": "An automated adverse media search returns one weak hit, a common surname shared with an individual named in an unrelated news story overseas. The date of birth and location on file do not match the customer."
+      }
+    ],
+    "disposition_options": [
+      { "key": "standard", "label": "Standard monitoring" },
+      { "key": "edd", "label": "Enhanced Due Diligence (EDD)" },
+      { "key": "escalate_mlro", "label": "Escalate to MLRO" },
+      { "key": "block_sar", "label": "Block or SAR" }
+    ],
+    "correct_disposition": ["edd"],
+    "rationale": "MLR 2017 regulation 33(1)(b) requires Enhanced Due Diligence and enhanced ongoing monitoring where the firm has a business relationship with a person established in a high risk third country, or conducts a relevant transaction where either party is established there. Since 30 June 2026, following the Money Laundering and Terrorist Financing (Amendment) Regulations 2026, the automatic statutory trigger applies specifically to countries on FATF's Call for Action list, a narrower test than the previous high risk third country list. Applying that here, the payment under review is a relevant transaction with a party established in a Call for Action jurisdiction, so regulation 33 is engaged on the facts, not merely inferred from a general commercial connection. Every other signal in the file (consistent volumes, documented source of funds, a supplier relationship that matches the customer's stated business, and an adverse media hit that does not match on date of birth or location) points to otherwise low underlying risk. The proportionate action is Enhanced Due Diligence with the reasoning documented on file, not an automatic escalation to Block or SAR on the strength of the jurisdiction flag alone, and not Standard monitoring, which would skip a mandatory regulation 33 obligation the file has already engaged.",
+    "related_guide": {
+      "title": "The Onboarding Dilemma",
+      "url": "/kyc-onboarding-dilemma.html",
+      "reason": "More on proportionate judgement calls like this one"
+    }
+  },
+  {
+    "module": "risk_scoring",
+    "case_number": 2,
+    "entity_id": "risk-domestic-pep-102",
+    "name": "New Personal Account, Sitting Member of Parliament",
+    "title": "The PEP Who Should Not Be Declined",
+    "briefing": "A new personal banking customer is confirmed, via screening, as a sitting Member of Parliament, a domestic PEP under MLR 2017. Review the signals below, then decide.",
+    "layout": "cross_reference",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Applicant", "color": "teal" },
+        { "id": "n2", "label": "Domestic PEP hit", "sublabel": "Screening confirmed", "color": "amber" },
+        { "id": "n3", "label": "Source of wealth", "sublabel": "Documented salary", "color": "teal" },
+        { "id": "n4", "label": "Adverse media", "sublabel": "None found", "color": "teal" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n1", "to": "n3" },
+        { "from": "n1", "to": "n4" }
+      ]
+    },
+    "cross_reference_facts": [
+      {
+        "icon": "id",
+        "title": "PEP screening hit",
+        "body": "Screening confirms the applicant is a sitting Member of Parliament, a domestic Politically Exposed Person under MLR 2017 regulation 35(12). This status triggers the mandatory Enhanced Due Diligence measures in regulation 35(5), including senior management approval, establishing source of wealth and source of funds, and enhanced ongoing monitoring."
+      },
+      {
+        "icon": "pattern",
+        "title": "Adverse media check",
+        "body": "No adverse media of any kind is found against the applicant, their family members, or known close associates."
+      },
+      {
+        "icon": "credit",
+        "title": "Source of wealth",
+        "body": "Source of wealth is clear and unremarkable: a Parliamentary salary, a matter of public record, plus documented rental income from a single co-owned residential property, independently verifiable against Land Registry data."
+      },
+      {
+        "icon": "cash",
+        "title": "Product usage",
+        "body": "The account requested is an ordinary personal current account, with no unusual product complexity or requested transaction limits."
+      },
+      {
+        "icon": "network",
+        "title": "How the hit itself reads",
+        "body": "The PEP list hit shows no allegation, finding, or investigation attached, it is a status flag confirming who the applicant is, not a record of any wrongdoing."
+      }
+    ],
+    "disposition_options": [
+      { "key": "standard", "label": "Standard monitoring" },
+      { "key": "edd", "label": "Enhanced Due Diligence (EDD)" },
+      { "key": "escalate_mlro", "label": "Escalate to MLRO" },
+      { "key": "block_sar", "label": "Block or SAR" }
+    ],
+    "correct_disposition": ["edd"],
+    "rationale": "MLR 2017 regulation 35 requires Enhanced Due Diligence where the customer genuinely meets the PEP definition in regulation 35(12), and regulation 35(3A), in force since January 2024, establishes that a domestic PEP's assessment must start from a lower level of risk than a non-domestic PEP's, absent enhanced risk factors. FCA guidance FG25/3 (July 2025, superseding the earlier FG17/6) confirms this starting point and supports proportionate, less intrusive measures for a lower risk domestic PEP. Applying that here, the file has genuine domestic PEP status and nothing else, no adverse media, a documented and unremarkable source of wealth, and ordinary product usage. The proportionate response is Enhanced Due Diligence, applied because the status requires it, not because anything found so far justifies more. Treating the PEP status itself as grounds to decline the relationship is the common error this case is built to correct, PEP status is a trigger for closer, proportionate checking, not a finding against the customer.",
+    "related_guide": {
+      "title": "PEP Due Diligence: What Good Looks Like",
+      "url": "/pep-guide-part2.html",
+      "reason": "More on the domestic PEP baseline and proportionate EDD"
+    }
+  },
+  {
+    "module": "risk_scoring",
+    "case_number": 3,
+    "entity_id": "risk-aggregate-ownership-103",
+    "name": "Tradewind Capital Partners Ltd",
+    "title": "Clean on the Name, Blocked on the Maths",
+    "briefing": "Tradewind Capital Partners Ltd has applied for onboarding. The entity itself returns no direct sanctions match. Build out the ownership tree and screen each shareholder, then decide.",
+    "layout": "ownership_tree",
+    "track_listed_ownership_aggregate": true,
+    "correct_disposition": ["escalate_mlro", "block_sar"],
+    "rationale": "OFAC's 50 Percent Rule establishes that an entity owned 50 percent or more in the aggregate by one or more blocked persons is itself treated as blocked, whether or not the entity appears on the SDN list in its own name, and no single blocked person needs to individually hold 50 percent. Applying that rule to this file, two separate shareholders (30 percent and 25 percent) each return a screening match against the OFAC SDN list, and summed together their combined stake is 55 percent, above the 50 percent aggregation threshold. If the entity, its property, or the proposed transaction is subject to United States jurisdiction, it must be treated as blocked and the applicable OFAC restrictions and reporting obligations followed. A UK firm must separately assess whether UK sanctions apply, through a UK designation, a UK ownership or control finding, or another applicable UK prohibition, rather than assuming the OFAC match alone imposes a UK blocking obligation. The correct first action is to escalate to the MLRO to establish jurisdiction and determine the applicable UK response; Block or SAR follows once US jurisdiction is confirmed or a UK designation independently applies. A separate point for a UK analyst: OFSI's ownership and control test is not the same rule as OFAC's, and OFSI does not ordinarily aggregate entirely independent holdings held by separate designated persons, though joint holdings, joint arrangements, or one designated person controlling another's rights can change that analysis. Under the UK regime a single designated person meets the ownership limb by holding, on their own, more than 50 percent of the shares or voting rights, or the right to appoint or remove a majority of the board; the control limb is a separate, qualitative test, met where it is reasonable to expect that person could ensure the entity's affairs are conducted in accordance with their wishes, assessed case by case. Any required OFSI report must be made separately, and an NCA SAR should be considered only where there is an independent suspicion of money laundering or terrorist financing, it is not a substitute for sanctions restrictions or reporting. Do not assume the OFAC aggregate rule maps one to one onto the UK position, they are separate tests applied by separate regimes.",
+    "related_guide": {
+      "title": "Sanctions Compliance: OFAC, OFSI and Beyond",
+      "url": "/sanctions-compliance-guide.html",
+      "reason": "More on how OFAC and OFSI ownership rules actually differ"
+    },
+    "disposition_options": [
+      { "key": "standard", "label": "Standard monitoring" },
+      { "key": "edd", "label": "Enhanced Due Diligence (EDD)" },
+      { "key": "escalate_mlro", "label": "Escalate to MLRO" },
+      { "key": "block_sar", "label": "Block or SAR" }
+    ],
+    "nodes": [
+      {
+        "id": "n1",
+        "label": "Tradewind Capital Partners Ltd",
+        "type": "applicant",
+        "jurisdiction": "UK",
+        "screening": null
+      },
+      {
+        "id": "n2",
+        "label": "Shareholder, D. Kovalenko",
+        "type": "individual",
+        "jurisdiction": "Cyprus",
+        "ownership_pct": 30,
+        "screening": {
+          "match_confidence": 96,
+          "list_source": "OFAC SDN",
+          "dob_customer": "1968",
+          "dob_match": "1968",
+          "result": "possible_match"
+        }
+      },
+      {
+        "id": "n3",
+        "label": "Shareholder, M. Andreou",
+        "type": "individual",
+        "jurisdiction": "UAE",
+        "ownership_pct": 25,
+        "screening": {
+          "match_confidence": 94,
+          "list_source": "OFAC SDN",
+          "dob_customer": "1975",
+          "dob_match": "1975",
+          "result": "possible_match"
+        }
+      },
+      {
+        "id": "n4",
+        "label": "Shareholder, R. Whitfield",
+        "type": "individual",
+        "jurisdiction": "UK",
+        "ownership_pct": 45,
+        "screening": {
+          "match_confidence": 0,
+          "list_source": null,
+          "dob_customer": null,
+          "dob_match": null,
+          "result": "no_match"
+        }
+      }
+    ],
+    "edges": [
+      { "from": "n2", "to": "n1", "ownership_pct": 30 },
+      { "from": "n3", "to": "n1", "ownership_pct": 25 },
+      { "from": "n4", "to": "n1", "ownership_pct": 45 }
+    ]
+  },
+  {
+    "module": "risk_scoring",
+    "case_number": 4,
+    "entity_id": "risk-over-scored-104",
+    "name": "New Personal Current Account Applicant",
+    "title": "The Over Scored Customer",
+    "briefing": "A new personal current account application clears the investigation tools' automated risk model at High. Review each flag feeding that score, then decide whether the model's own output is the right answer.",
+    "layout": "cross_reference",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Applicant", "color": "teal" },
+        { "id": "n2", "label": "Online only onboarding", "color": "amber" },
+        { "id": "n3", "label": "Foreign inbound transfer", "sublabel": "Low value", "color": "amber" },
+        { "id": "n4", "label": "Weak fuzzy match", "sublabel": "Common surname", "color": "amber" },
+        { "id": "n5", "label": "New account", "sublabel": "Opened 12 days ago", "color": "amber" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n1", "to": "n3" },
+        { "from": "n1", "to": "n4" },
+        { "from": "n1", "to": "n5" }
+      ]
+    },
+    "cross_reference_facts": [
+      {
+        "icon": "device",
+        "title": "Online only onboarding",
+        "body": "The account was opened entirely online, with no in-person verification step. This is the bank's standard retail onboarding channel, used for the large majority of new personal accounts."
+      },
+      {
+        "icon": "cash",
+        "title": "Foreign inbound transfer",
+        "body": "One inbound transfer of 180 pounds was received from an account held overseas, a gift from a family member, according to the payment reference."
+      },
+      {
+        "icon": "id",
+        "title": "Weak fuzzy match",
+        "body": "The applicant's name produced a fuzzy sanctions match at 41 percent confidence against a common surname, well below the 50 percent threshold this tool treats as worth surfacing on its own."
+      },
+      {
+        "icon": "pattern",
+        "title": "New account",
+        "body": "The account was opened 12 days ago. Every personal current account is new at some point, this alone describes when the relationship started, not how it has behaved."
+      }
+    ],
+    "risk_signals": [
+      { "label": "Online only onboarding, no in person verification", "points": 4 },
+      { "label": "Single low value inbound transfer from a foreign account", "points": 3 },
+      { "label": "Weak sanctions fuzzy match on a common surname, below the surfacing threshold", "points": 3 },
+      { "label": "New account, opened within the last 30 days", "points": 3 }
+    ],
+    "requires_override_note": true,
+    "disposition_options": [
+      { "key": "standard", "label": "Standard monitoring" },
+      { "key": "edd", "label": "Enhanced Due Diligence (EDD)" },
+      { "key": "escalate_mlro", "label": "Escalate to MLRO" },
+      { "key": "block_sar", "label": "Block or SAR" }
+    ],
+    "correct_disposition": ["standard"],
+    "rationale": "MLR 2017 regulations 18 and 19 require a firm to identify and assess its money laundering and terrorist financing risks and maintain proportionate policies, controls and procedures to manage them. The regulations do not themselves prescribe a particular scoring model or state that a numerical result must always be overridden by human judgement, but FCA guidance and findings on risk assessment expect firms to apply judgement and common sense, document their methodology, and test and review automated risk assessment processes rather than treat a score as a final answer. Applying that expectation here, the automated model's High output is produced by simply adding four flags together, and every one of those flags is individually minor: online onboarding is the bank's normal channel, the foreign transfer is low value with a documented family reason, the fuzzy match sits below the tool's own surfacing threshold, and every account is new once. This case's model gives disproportionate cumulative weight to weak, non-corroborating indicators, that is a weighting and calibration failure, not a demonstration that minor indicators can never collectively establish higher risk in other cases. The proportionate response here is to override the model's High output to Standard monitoring, with the override reasoning documented on file, not to escalate or block on the strength of an additive score alone, and not to accept the High output silently without recording why it was overridden. Enhanced Due Diligence remains necessary wherever a statutory trigger or a properly documented high risk assessment actually requires it, this case's facts simply do not.",
+    "related_guide": {
+      "title": "UK AML Compliance: Core Obligations",
+      "url": "/aml-guide-part2.html",
+      "reason": "More on the risk based approach and proportionate CDD"
+    }
+  },
+  {
+    "module": "risk_scoring",
+    "case_number": 5,
+    "entity_id": "risk-free-text-105",
+    "name": "Outbound Wire, Reference WVL9284",
+    "title": "The Name in the Free Text Field",
+    "briefing": "An outbound wire payment has cleared screening. Review every field on the payment, then decide.",
+    "layout": "cross_reference",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Payment", "color": "teal" },
+        { "id": "n2", "label": "Debtor account", "sublabel": "Screened clean", "color": "teal" },
+        { "id": "n3", "label": "Creditor account", "sublabel": "Screened clean", "color": "teal" },
+        { "id": "n4", "label": "Intermediary agent", "sublabel": "Screened clean", "color": "teal" },
+        { "id": "n5", "label": "Reference line", "color": "teal" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n1", "to": "n3" },
+        { "from": "n1", "to": "n4" },
+        { "from": "n1", "to": "n5" }
+      ]
+    },
+    "cross_reference_facts": [
+      {
+        "icon": "id",
+        "title": "Debtor account screening",
+        "body": "The debtor (paying customer) name field screens against sanctions and watchlist data with no match."
+      },
+      {
+        "icon": "id",
+        "title": "Creditor account screening",
+        "body": "The creditor (receiving beneficiary) name field screens with no match."
+      },
+      {
+        "icon": "network",
+        "title": "Intermediary agent screening",
+        "body": "The correspondent and intermediary bank fields on the payment both screen with no match."
+      },
+      {
+        "icon": "message",
+        "title": "Reference line",
+        "body": "The payment reference field reads: 'FAO cargo agent, M/V NORTHERN STAR consignment, ref WVL9284.'"
+      }
+    ],
+    "disposition_options": [
+      { "key": "standard", "label": "Standard monitoring" },
+      { "key": "edd", "label": "Enhanced Due Diligence (EDD)" },
+      { "key": "escalate_mlro", "label": "Escalate to MLRO" },
+      { "key": "block_sar", "label": "Block or SAR" }
+    ],
+    "correct_disposition": ["escalate_mlro", "block_sar"],
+    "rationale": "The screening obligation covers the payment as a whole, not only its structured party fields, a sanctioned name, vessel, or term typed into a free text reference or remittance line is just as much a screening concern as one appearing in a named party field. Applying that here, every structured field on this payment (debtor, creditor, and both intermediary fields) screens clean, but the free text reference line names a vessel consignment that structured field screening was never configured to read in the first place. A clean result across every field the system actually checked is not the same as a clean payment. The correct action is to escalate for investigation, or block pending that investigation, not to clear the payment on the strength of a structured field pass that never looked at the field carrying the actual red flag.",
+    "related_guide": {
+      "title": "Tuning Screening Algorithms: Why Fuzzy Matching Isn't Magic",
+      "url": "/screening-algorithm-tuning-guide.html",
+      "reason": "More on what structured-field screening does and does not catch"
+    }
+  },
+  {
+    "module": "risk_scoring",
+    "case_number": 6,
+    "entity_id": "risk-mixer-pattern-106",
+    "name": "Exchange Account, Wallet 0x7f...",
+    "title": "The Pattern, Not the Mixer",
+    "briefing": "An exchange customer's on chain activity shows a distinctive sequence shortly before a large withdrawal. Review the pattern, then decide.",
+    "layout": "cross_reference",
+    "header_scene": {
+      "nodes": [
+        { "id": "n1", "label": "Customer wallet", "color": "teal" },
+        { "id": "n2", "label": "Heavy mixer usage", "sublabel": "Short window", "color": "amber" },
+        { "id": "n3", "label": "Large withdrawal", "sublabel": "Off ramp to fiat", "color": "amber" },
+        { "id": "n4", "label": "Account KYC status", "sublabel": "Passed standard checks", "color": "teal" }
+      ],
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n1", "to": "n3" },
+        { "from": "n1", "to": "n4" }
+      ]
+    },
+    "cross_reference_facts": [
+      {
+        "icon": "network",
+        "title": "Heavy mixer usage",
+        "body": "Over a 48 hour window, the large majority of inbound funds to this wallet were routed through crypto mixing services before reaching the exchange account. No specific mixing service or its current sanctions status is relevant here, the pattern is what matters, not which tool was used."
+      },
+      {
+        "icon": "cash",
+        "title": "Large withdrawal",
+        "body": "Immediately after the mixing activity, the customer requested a large withdrawal, off ramping the funds to a fiat bank account in a single transaction."
+      },
+      {
+        "icon": "id",
+        "title": "Account KYC status",
+        "body": "The exchange account itself passed standard identity verification at onboarding, with no document or biometric flags on file."
+      },
+      {
+        "icon": "pattern",
+        "title": "Timing correlation",
+        "body": "The mixer usage and the large withdrawal are tightly clustered in time, not spread across the account's otherwise ordinary trading history."
+      }
+    ],
+    "disposition_options": [
+      { "key": "standard", "label": "Standard monitoring" },
+      { "key": "edd", "label": "Enhanced Due Diligence (EDD)" },
+      { "key": "escalate_mlro", "label": "Escalate to MLRO" },
+      { "key": "block_sar", "label": "Block or SAR" }
+    ],
+    "correct_disposition": ["edd", "escalate_mlro"],
+    "rationale": "The established red flag in this typology is the behavioural pattern itself, heavy use of obfuscation tooling immediately followed by cashing out, not whether any specific named tool currently carries a sanctions designation, a status that has proven contested and reversible over time. Applying that here, a clean KYC result at onboarding does not explain away a wallet that routed the large majority of its inbound funds through mixing services in a tight window immediately before a large fiat off ramp, that sequence is itself the signal, independent of which service was used. The proportionate response is Enhanced Due Diligence or escalation to the MLRO, with a Suspicious Activity Report considered on the strength of the pattern, without relying on any named entity's current designation status as part of that reasoning.",
+    "related_guide": {
+      "title": "The Crypto Guide, Part 3: Typologies, Mixers, Layering, and Rug Pulls Explained",
+      "url": "/crypto-guide-part3.html",
+      "reason": "More on mixer typologies and why the pattern matters more than the tool"
+    }
   }
 ]
