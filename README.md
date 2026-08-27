@@ -39,6 +39,10 @@ uvicorn main:app --reload
 
 API available at `http://localhost:8000`
 
+## Support this project
+
+This API is free and open-source. If it's useful to you, consider [sponsoring on GitHub Sponsors](https://github.com/sponsors/FinCrimeRadar).
+
 ## Disclaimer
 
 For educational purposes only. Not a substitute for regulated compliance screening.
