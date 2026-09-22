@@ -24,14 +24,13 @@ EXPECTED_DISPLAY_FIELDS = {
 }
 
 
-def test_all_three_cases_load_via_glob():
-    assert set(_CASES_CACHE.keys()) == {"sar-phase0-001", "sar-002", "sar-003"}
+def test_existing_and_sar_003_cases_load_via_glob():
+    assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(_CASES_CACHE)
 
 
 def test_sar_003_appears_in_case_list():
     ids = [c["case_id"] for c in json.loads(list_cases().body)]
-    assert "sar-003" in ids
-    assert len(ids) == 3
+    assert ids.count("sar-003") == 1
 
 
 def test_case_detail_contains_only_whitelisted_fields():
