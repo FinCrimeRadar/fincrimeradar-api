@@ -111,11 +111,29 @@ def test_sar_003_display_does_not_preanswer_distractors():
         "solicitor's client account associated with the property matter reference"
     )
 
-    visible_case_text = json.dumps(display).lower()
-    assert "not the suspicion" not in visible_case_text
-    assert "does not establish" not in visible_case_text
-    assert "neither suspicious nor exculpatory" not in visible_case_text
-    assert "must not be counted as a red flag" not in visible_case_text
+
+
+def test_visible_case_briefs_do_not_state_distractor_judgements():
+    judgement_terms = (
+        "suspicion",
+        "suspicious",
+        "red flag",
+        "exculpatory",
+        "not a basis",
+    )
+
+    for case_id in _CASES_CACHE:
+        display = json.loads(get_case(case_id).body)
+        subject = dict(display["subject"])
+        subject.pop("practice_instruction", None)
+        factual_brief = {**display, "subject": subject}
+        visible_case_text = json.dumps(factual_brief).lower()
+
+        for judgement_term in judgement_terms:
+            assert judgement_term not in visible_case_text, (
+                f"{case_id} exposes distractor judgement language: "
+                f"{judgement_term}"
+            )
 
 
 def test_unknown_case_is_rejected():
