@@ -1,0 +1,45 @@
+{
+  "case_id": "sar-003",
+  "title": "The Enquiry Is Not the Suspicion",
+  "module": "sar-sandbox",
+  "subject": {
+    "entity_name": "Aldercroft Property Services Ltd",
+    "entity_type": "UK private limited company",
+    "account_type": "Business current account",
+    "account_opened": "2019-04-15",
+    "declared_business": "Property maintenance services for commercial and residential clients, stated annual turnover under 300,000 GBP",
+    "director": "Composite individual, UK resident, sole person with significant control on record",
+    "review_trigger": "A verified law-enforcement information request concerning the director was received. It disclosed no allegation or finding. It prompted this relationship review; a law-enforcement enquiry alone does not establish the firm's own suspicion.",
+    "practice_instruction": "Identify the funds you suspect may be criminal property and explain the observed facts supporting that suspicion. Do not state that the property is criminal property, that a predicate offence occurred, or that any person is guilty."
+  },
+  "activity_window": { "start": "2026-07-08", "end": "2026-07-22" },
+  "transactions": [
+    { "date": "2026-07-08", "from": "R. Aldous", "amount_gbp": 15200, "description": "Faster Payment, reference: deposit" },
+    { "date": "2026-07-13", "from": "M. Iqbal", "amount_gbp": 21750, "description": "Faster Payment, reference: loan" },
+    { "date": "2026-07-17", "from": "T. Whitfield", "amount_gbp": 10300, "description": "Faster Payment, reference: project share" }
+  ],
+  "onward_movement": {
+    "pattern": "The three incoming payments were combined and transferred as one payment to a UK solicitor's client account, referenced with a property matter number, within days of the final incoming credit",
+    "destination_note": "A solicitor's client account is a standard and lawful destination for property-related funds. The client-account status alone is neither suspicious nor exculpatory, but the payment remains part of the transaction chronology and the property trail",
+    "total_moved_gbp": 47250
+  },
+  "supporting_facts": [
+    "None of the three senders share a name, address or any known connection with the company, its director or its declared commercial clients, based on account name matching alone",
+    "The payment references given, deposit, loan and project share, are inconsistent with each other and do not support one coherent stated purpose",
+    "The only supporting document the director provided was a single generic letter that did not name or reconcile the individual senders, amounts, dates or the stated purpose of the payments",
+    "When asked to explain the payments, the director described a joint property opportunity involving the three senders, an activity not part of the company's declared property-maintenance business",
+    "The information provided does not explain the economic relationship between any of the three senders and the claimed property opportunity, or why each sender's contribution differs so widely in amount"
+  ],
+  "red_flags": [
+    { "id": "rf1", "label": "Multiple unrelated personal senders inconsistent with the customer's established commercial activity" },
+    { "id": "rf2", "label": "Inconsistent payment references that do not support one coherent stated purpose" },
+    { "id": "rf3", "label": "Generic supporting document that does not reconcile the senders, amounts, dates or stated purpose" },
+    { "id": "rf4", "label": "Personal-account receipts pooled into a property-related payment outside the account's established activity" },
+    { "id": "rf5", "label": "Customer's explanation introduces an undeclared joint-property activity inconsistent with the known business profile" },
+    { "id": "rf6", "label": "Information supplied does not explain the economic relationship between each sender and the claimed property opportunity" }
+  ],
+  "distractor_facts": [
+    "The law-enforcement information request is known law-enforcement interest and the catalyst for this relationship review. It is not, on its own, a basis for suspicion and must not be counted as a red flag",
+    "The receiving solicitor's client-account status is a standard, lawful arrangement for property-related payments. It is neither suspicious nor exculpatory on its own and must not be counted as a red flag"
+  ]
+}
