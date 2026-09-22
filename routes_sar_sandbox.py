@@ -73,20 +73,49 @@ def get_case_full(case_id: str) -> dict | None:
     return _CASES_CACHE.get(case_id)
 
 
+_SUBJECT_DISPLAY_FIELDS = (
+    "entity_name",
+    "entity_type",
+    "customer_type",
+    "account_type",
+    "account_opened",
+    "declared_business",
+    "declared_circumstances",
+    "established_profile",
+    "director",
+    "review_trigger",
+    "practice_instruction",
+)
+_ACTIVITY_WINDOW_DISPLAY_FIELDS = ("start", "end")
+_TRANSACTION_DISPLAY_FIELDS = ("date", "from", "amount_gbp", "description")
+_ONWARD_MOVEMENT_DISPLAY_FIELDS = ("pattern", "destination_note", "total_moved_gbp")
+
+
+def _display_fields(record: dict, allowed_fields: tuple[str, ...]) -> dict:
+    return {key: record[key] for key in allowed_fields if key in record}
+
+
 def get_case_display(case_id: str) -> dict | None:
-    """The only case data ever sent to the browser. A whitelist: fields
-    are named explicitly, so anything added to the case JSON later is
-    excluded here by default until someone deliberately adds it."""
+    """The only case data ever sent to the browser. Both top-level and
+    nested object fields are whitelisted, so fields added to case JSON later
+    remain server-side until deliberately added here."""
     case = _CASES_CACHE.get(case_id)
     if case is None:
         return None
     return {
         "title": case["title"],
-        "subject": case["subject"],
-        "activity_window": case["activity_window"],
-        "transactions": case["transactions"],
-        "onward_movement": case["onward_movement"],
-        "supporting_facts": case["supporting_facts"],
+        "subject": _display_fields(case["subject"], _SUBJECT_DISPLAY_FIELDS),
+        "activity_window": _display_fields(
+            case["activity_window"], _ACTIVITY_WINDOW_DISPLAY_FIELDS
+        ),
+        "transactions": [
+            _display_fields(transaction, _TRANSACTION_DISPLAY_FIELDS)
+            for transaction in case["transactions"]
+        ],
+        "onward_movement": _display_fields(
+            case["onward_movement"], _ONWARD_MOVEMENT_DISPLAY_FIELDS
+        ),
+        "supporting_facts": list(case["supporting_facts"]),
     }
 
 

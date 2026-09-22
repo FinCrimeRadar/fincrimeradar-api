@@ -24,6 +24,10 @@ EXPECTED_DISPLAY_FIELDS = {
 }
 
 
+def get_display_json(case_id):
+    return json.loads(get_case(case_id).body)
+
+
 def test_existing_and_sar_003_cases_load_via_glob():
     assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(_CASES_CACHE)
 
@@ -35,13 +39,32 @@ def test_sar_003_appears_in_case_list():
 
 def test_case_detail_contains_only_whitelisted_fields():
     for case_id in _CASES_CACHE:
-        display = json.loads(get_case(case_id).body)
+        display = get_display_json(case_id)
         assert set(display.keys()) == EXPECTED_DISPLAY_FIELDS
+
+
+def test_nested_case_fields_are_excluded_by_default():
+    case = get_case_full("sar-003")
+    sentinel = "server-side-answer-key-probe"
+    probe_locations = [
+        case["subject"],
+        case["activity_window"],
+        case["transactions"][0],
+        case["onward_movement"],
+    ]
+
+    try:
+        for record in probe_locations:
+            record["answer_key_probe"] = sentinel
+        assert sentinel not in json.dumps(get_display_json("sar-003"))
+    finally:
+        for record in probe_locations:
+            record.pop("answer_key_probe", None)
 
 
 def test_answer_key_and_distractors_do_not_leak_to_client():
     for case_id in _CASES_CACHE:
-        display = json.loads(get_case(case_id).body)
+        display = get_display_json(case_id)
         assert "red_flags" not in display
         assert "distractor_facts" not in display
 
@@ -85,7 +108,7 @@ def test_sar_003_scoring_uses_only_the_six_approved_indicator_ids():
 
 
 def test_sar_003_display_includes_practice_instruction():
-    display = json.loads(get_case("sar-003").body)
+    display = get_display_json("sar-003")
     instruction = display["subject"]["practice_instruction"]
     assert instruction == (
         "Identify the funds you suspect may be criminal property and explain "
@@ -96,7 +119,7 @@ def test_sar_003_display_includes_practice_instruction():
 
 
 def test_sar_003_display_does_not_preanswer_distractors():
-    display = json.loads(get_case("sar-003").body)
+    display = get_display_json("sar-003")
     review_trigger = display["subject"]["review_trigger"]
     destination_note = display["onward_movement"]["destination_note"]
 
@@ -123,7 +146,7 @@ def test_visible_case_briefs_do_not_state_distractor_judgements():
     )
 
     for case_id in _CASES_CACHE:
-        display = json.loads(get_case(case_id).body)
+        display = get_display_json(case_id)
         subject = dict(display["subject"])
         subject.pop("practice_instruction", None)
         factual_brief = {**display, "subject": subject}
