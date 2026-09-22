@@ -100,6 +100,7 @@ def test_sar_003_display_does_not_preanswer_distractors():
     review_trigger = display["subject"]["review_trigger"]
     destination_note = display["onward_movement"]["destination_note"]
 
+    assert display["title"] == "The Information Request"
     assert review_trigger == (
         "A verified law-enforcement information request concerning the director "
         "was received. It disclosed no allegation or finding and prompted this "
@@ -110,10 +111,11 @@ def test_sar_003_display_does_not_preanswer_distractors():
         "solicitor's client account associated with the property matter reference"
     )
 
-    visible_distractor_text = f"{review_trigger} {destination_note}".lower()
-    assert "does not establish" not in visible_distractor_text
-    assert "neither suspicious nor exculpatory" not in visible_distractor_text
-    assert "must not be counted as a red flag" not in visible_distractor_text
+    visible_case_text = json.dumps(display).lower()
+    assert "not the suspicion" not in visible_case_text
+    assert "does not establish" not in visible_case_text
+    assert "neither suspicious nor exculpatory" not in visible_case_text
+    assert "must not be counted as a red flag" not in visible_case_text
 
 
 def test_unknown_case_is_rejected():
