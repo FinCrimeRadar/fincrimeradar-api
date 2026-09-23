@@ -272,23 +272,53 @@ def test_case_with_non_utf8_bytes_is_excluded_and_logged():
         assert get_case_display("sar-003") is not None
 
 
+class _RecursionErrorOnTarget:
+    """Wraps the real json module, raising RecursionError only for a named
+    target file and delegating everything else (including json.dumps used
+    elsewhere in this test file, and the real load for every other case
+    file _load_cases reads in the same pass) to the real module."""
+
+    def __init__(self, real_json, target_name):
+        self._real = real_json
+        self._target_name = target_name
+
+    def load(self, f):
+        if self._target_name in getattr(f, "name", ""):
+            raise RecursionError("maximum recursion depth exceeded while decoding a JSON object")
+        return self._real.load(f)
+
+    def __getattr__(self, attr):
+        return getattr(self._real, attr)
+
+
 def test_case_with_deeply_nested_json_is_excluded_and_logged():
     # Regression test for a second /code-review finding on this same
     # branch: CPython's json decoder raises RecursionError, not a
     # ValueError or OSError subclass, on pathologically deep nesting. A
     # narrower except (OSError, ValueError) still left this path able to
     # crash the whole app on import.
-    # Depth 20000 (40000 bytes) reliably triggers RecursionError while
-    # staying well under the 64 KB size cap, so this exercises the parse
-    # path specifically, not the size cap added alongside it.
-    deeply_nested = "[" * 20000 + "]" * 20000
-    with _tmp_case_dir({"case_sar_zzz_deepnest.json": deeply_nested}) as (cases, invalid_count, log):
-        assert invalid_count == 1
-        assert "could not read or parse file" in log
-        assert "RecursionError" in log
-        assert "case_sar_zzz_deepnest.json" in log
-        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
-        assert get_case_display("sar-003") is not None
+    # The actual nesting depth needed to trigger RecursionError depends on
+    # the platform's C stack: a depth that reliably raised it locally
+    # parsed clean on the CI runner instead, so this test no longer
+    # depends on hitting that threshold. It replaces the json name inside
+    # routes_sar_sandbox's own module namespace only (not the shared json
+    # module every other import of it sees) with a wrapper that raises
+    # RecursionError for one named file and defers to the real json module
+    # for every other file _load_cases reads, so this is deterministic on
+    # every platform, not tuned to one machine's stack depth.
+    target_name = "case_sar_zzz_deepnest.json"
+    real_json = routes_sar_sandbox.json
+    routes_sar_sandbox.json = _RecursionErrorOnTarget(real_json, target_name)
+    try:
+        with _tmp_case_dir({target_name: "[1, 2, 3]"}) as (cases, invalid_count, log):
+            assert invalid_count == 1
+            assert "could not read or parse file" in log
+            assert "RecursionError" in log
+            assert target_name in log
+            assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+            assert get_case_display("sar-003") is not None
+    finally:
+        routes_sar_sandbox.json = real_json
 
 
 def test_committed_case_files_are_all_well_under_the_size_cap():
