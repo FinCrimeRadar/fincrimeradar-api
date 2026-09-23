@@ -277,12 +277,44 @@ def test_case_with_deeply_nested_json_is_excluded_and_logged():
     # ValueError or OSError subclass, on pathologically deep nesting. A
     # narrower except (OSError, ValueError) still left this path able to
     # crash the whole app on import.
-    deeply_nested = "[" * 100000 + "]" * 100000
+    # Depth 20000 (40000 bytes) reliably triggers RecursionError while
+    # staying well under the 64 KB size cap, so this exercises the parse
+    # path specifically, not the size cap added alongside it.
+    deeply_nested = "[" * 20000 + "]" * 20000
     with _tmp_case_dir({"case_sar_zzz_deepnest.json": deeply_nested}) as (cases, invalid_count, log):
         assert invalid_count == 1
         assert "could not read or parse file" in log
         assert "RecursionError" in log
         assert "case_sar_zzz_deepnest.json" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+        assert get_case_display("sar-003") is not None
+
+
+def test_committed_case_files_are_all_well_under_the_size_cap():
+    for path in sorted(routes_sar_sandbox.CASE_DIR.glob(routes_sar_sandbox.CASE_GLOB)):
+        size = path.stat().st_size
+        assert size < routes_sar_sandbox._CASE_FILE_SIZE_CAP_BYTES, (
+            f"{path.name} is {size} bytes, at or over the "
+            f"{routes_sar_sandbox._CASE_FILE_SIZE_CAP_BYTES} byte cap"
+        )
+
+
+def test_oversized_case_file_is_excluded_and_logged():
+    # Adversarial review finding 2 on this PR: validation checked type and
+    # non-emptiness but had no upper bound on content size, so a huge but
+    # well-formed case file would pass and bloat every response that
+    # serves it. One byte over the cap, valid JSON otherwise, to isolate
+    # the size check from the parse/validation checks covered elsewhere.
+    cap = 64 * 1024
+    padding = "x" * cap
+    oversized = json.dumps({"case_id": "sar-huge", "padding": padding})
+    assert len(oversized.encode("utf-8")) > cap
+
+    with _tmp_case_dir({"case_sar_zzz_oversized.json": oversized}) as (cases, invalid_count, log):
+        assert "sar-huge" not in cases
+        assert invalid_count == 1
+        assert "size cap" in log
+        assert "case_sar_zzz_oversized.json" in log
         assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
         assert get_case_display("sar-003") is not None
 

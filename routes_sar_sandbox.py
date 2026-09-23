@@ -115,6 +115,19 @@ def _validate_case(case, path: Path) -> list[str]:
     return errors
 
 
+# The three committed case files run 2.8 to 4.2 KB. 64 KB is generous
+# headroom over that for a legitimate training case while still rejecting
+# a file large enough to bloat every response that serves it (adversarial
+# review finding 2 on this PR: validation checked type and non-emptiness
+# but had no upper bound on content size).
+_CASE_FILE_SIZE_CAP_BYTES = 64 * 1024
+
+
+class _CaseFileTooLarge(Exception):
+    """Raised internally in _load_cases only, to give the size cap its own
+    clear log message distinct from a genuine read or parse failure."""
+
+
 def _load_cases():
     """Loads every case_sar_*.json, validating each independently so one
     malformed or invalid file is excluded and logged rather than crashing
@@ -133,8 +146,24 @@ def _load_cases():
 
     for path in case_paths:
         try:
+            # Size checked before opening, so an oversized file is rejected
+            # without reading its content into memory at all. Same broad
+            # except as the read/parse below and for the same reason:
+            # path.stat() itself can raise (permissions, a race against the
+            # file being removed after the glob above), and this loop's one
+            # job is that no single file, in any way it can fail, is
+            # allowed to crash this module's import.
+            size = path.stat().st_size
+            if size > _CASE_FILE_SIZE_CAP_BYTES:
+                raise _CaseFileTooLarge(
+                    f"file exceeds {_CASE_FILE_SIZE_CAP_BYTES} byte size cap: {size} bytes"
+                )
             with open(path, "r", encoding="utf-8") as f:
                 case = json.load(f)
+        except _CaseFileTooLarge as exc:
+            invalid_count += 1
+            print(f"SAR sandbox case load error: file={path.name} case_id=unknown errors=['{exc}']")
+            continue
         except Exception as exc:
             # Deliberately broad, scoped to only this read and parse, not
             # the rest of the loop body. Two rounds of code review each
