@@ -42,28 +42,129 @@ CASE_DIR = Path(__file__).parent
 CASE_GLOB = "case_sar_*.json"
 
 
+# The shape every case file must have, derived from what the rest of this
+# module actually reads unfiltered: _load_cases's own dict key, list_cases
+# and get_case_display's top level accesses, and score_extraction's
+# `rf["id"] for rf in case_red_flags`. Nested whitelisted fields (subject,
+# activity_window, transaction and onward_movement sub-keys) are read
+# through _display_fields's `if key in record`, which already tolerates a
+# missing individual field, different case types use different subject
+# sub-fields, so those are not required here. distractor_facts is never
+# indexed by key, only serialised whole into the extraction prompt, but is
+# validated as a list anyway since a case with no distractor_facts at all
+# would defeat the point of a training case with a review-trigger red
+# herring, per the case_sar_003.json pattern this schema was audited against.
+_REQUIRED_CASE_SCHEMA = {
+    "case_id": str,
+    "title": str,
+    "subject": dict,
+    "activity_window": dict,
+    "transactions": list,
+    "onward_movement": dict,
+    "supporting_facts": list,
+    "red_flags": list,
+    "distractor_facts": list,
+}
+
+
+def _validate_case(case, path: Path) -> list[str]:
+    """Structural validation only, run once per case file at load time.
+    Returns an empty list for a valid case. Never includes case content in
+    an error string, only key names, list indices and type names, since
+    these errors are printed to the server log."""
+    if not isinstance(case, dict):
+        return [f"{path.name}: case is not a JSON object"]
+
+    errors = []
+    for key, expected_type in _REQUIRED_CASE_SCHEMA.items():
+        if key not in case:
+            errors.append(f"{path.name}: missing required key {key!r}")
+            continue
+        if not isinstance(case[key], expected_type):
+            errors.append(
+                f"{path.name}: key {key!r} must be {expected_type.__name__}, "
+                f"got {type(case[key]).__name__}"
+            )
+
+    if isinstance(case.get("case_id"), str) and not case["case_id"]:
+        errors.append(f"{path.name}: case_id must not be empty")
+
+    if isinstance(case.get("title"), str) and not case["title"]:
+        errors.append(f"{path.name}: title must not be empty")
+
+    if isinstance(case.get("transactions"), list):
+        for i, txn in enumerate(case["transactions"]):
+            if not isinstance(txn, dict):
+                errors.append(f"{path.name}: transactions[{i}] must be an object")
+
+    if isinstance(case.get("supporting_facts"), list):
+        for i, fact in enumerate(case["supporting_facts"]):
+            if not isinstance(fact, str):
+                errors.append(f"{path.name}: supporting_facts[{i}] must be a string")
+
+    if isinstance(case.get("red_flags"), list):
+        for i, rf in enumerate(case["red_flags"]):
+            if not isinstance(rf, dict):
+                errors.append(f"{path.name}: red_flags[{i}] must be an object")
+            elif not isinstance(rf.get("id"), str) or not rf["id"]:
+                errors.append(f"{path.name}: red_flags[{i}] missing a non-empty string 'id'")
+
+    return errors
+
+
 def _load_cases():
+    """Loads every case_sar_*.json, validating each independently so one
+    malformed or invalid file is excluded and logged rather than crashing
+    this module's import, which would take down the whole app (main.py
+    imports this module at its own top level). Returns (cases, invalid_count)."""
     case_paths = sorted(CASE_DIR.glob(CASE_GLOB))
     if not case_paths:
         raise FileNotFoundError(
             f"No files matching {CASE_GLOB!r} found in {CASE_DIR}. Confirm at "
             "least case_sar_phase0_001.json was committed alongside this route module."
         )
+
     cases = {}
+    seen_ids = set()
+    invalid_count = 0
+
     for path in case_paths:
-        with open(path, "r", encoding="utf-8") as f:
-            case = json.load(f)
-        cases[case["case_id"]] = case
-    return cases
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                case = json.load(f)
+        except json.JSONDecodeError as exc:
+            invalid_count += 1
+            print(
+                f"SAR sandbox case load error: file={path.name} case_id=unknown "
+                f"errors=['invalid JSON: {exc}']"
+            )
+            continue
+
+        errors = _validate_case(case, path)
+        case_id = case.get("case_id") if isinstance(case, dict) else None
+
+        if not errors and case_id in seen_ids:
+            errors = [f"{path.name}: duplicate case_id {case_id!r}"]
+
+        if errors:
+            invalid_count += 1
+            print(f"SAR sandbox case load error: file={path.name} case_id={case_id!r} errors={errors}")
+            continue
+
+        seen_ids.add(case_id)
+        cases[case_id] = case
+
+    return cases, invalid_count
 
 
 # Load once at import time, not per call, matching routes_scenario_lab.py's
 # and routes_guide_chat.py's pattern.
 try:
-    _CASES_CACHE = _load_cases()
+    _CASES_CACHE, _INVALID_CASES = _load_cases()
     _LOAD_ERROR = None
 except FileNotFoundError as exc:
     _CASES_CACHE = {}
+    _INVALID_CASES = 0
     _LOAD_ERROR = str(exc)
 
 

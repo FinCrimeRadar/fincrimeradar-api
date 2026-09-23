@@ -5,12 +5,19 @@ under FastAPI's APIRouter decorator, no ASGI server or TestClient needed).
 Run with pytest, or directly: python test_sar_sandbox.py
 """
 
+import contextlib
+import io
 import json
+import shutil
+import tempfile
+from pathlib import Path
 
 from fastapi import HTTPException
 
+import routes_sar_sandbox
 from routes_sar_sandbox import (
     _CASES_CACHE,
+    _validate_case,
     get_case,
     get_case_display,
     get_case_full,
@@ -167,6 +174,93 @@ def test_unknown_case_is_rejected():
         raise AssertionError("expected HTTPException for an unknown case_id")
     except HTTPException as exc:
         assert exc.status_code == 404
+
+
+def test_every_committed_case_is_valid():
+    case_paths = sorted(routes_sar_sandbox.CASE_DIR.glob(routes_sar_sandbox.CASE_GLOB))
+    assert case_paths, "no case_sar_*.json files found to validate"
+    for path in case_paths:
+        with open(path, "r", encoding="utf-8") as f:
+            case = json.load(f)
+        errors = _validate_case(case, path)
+        assert errors == [], f"{path.name} failed validation: {errors}"
+    assert routes_sar_sandbox._INVALID_CASES == 0
+
+
+def test_every_committed_case_renders_display():
+    for case_id in _CASES_CACHE:
+        display = get_case_display(case_id)
+        assert display is not None
+        json.dumps(display)
+
+
+@contextlib.contextmanager
+def _tmp_case_dir(extra_files):
+    """Copies every real case_sar_*.json into a tmp dir untouched, adds the
+    given extra files, points routes_sar_sandbox at the tmp dir for the
+    duration, runs _load_cases against it, then restores the real CASE_DIR
+    and the real _CASES_CACHE/_INVALID_CASES. Never edits a real case file.
+    Yields (cases, invalid_count, captured_log_text)."""
+    real_case_dir = routes_sar_sandbox.CASE_DIR
+    real_cases_cache = routes_sar_sandbox._CASES_CACHE
+    real_invalid_cases = routes_sar_sandbox._INVALID_CASES
+
+    tmp_dir = tempfile.mkdtemp(prefix="sar_case_test_")
+    try:
+        for path in real_case_dir.glob(routes_sar_sandbox.CASE_GLOB):
+            shutil.copy(path, Path(tmp_dir) / path.name)
+        for filename, content in extra_files.items():
+            (Path(tmp_dir) / filename).write_text(content, encoding="utf-8")
+
+        routes_sar_sandbox.CASE_DIR = Path(tmp_dir)
+        log = io.StringIO()
+        with contextlib.redirect_stdout(log):
+            cases, invalid_count = routes_sar_sandbox._load_cases()
+        routes_sar_sandbox._CASES_CACHE = cases
+        routes_sar_sandbox._INVALID_CASES = invalid_count
+        yield cases, invalid_count, log.getvalue()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        routes_sar_sandbox.CASE_DIR = real_case_dir
+        routes_sar_sandbox._CASES_CACHE = real_cases_cache
+        routes_sar_sandbox._INVALID_CASES = real_invalid_cases
+
+
+def test_case_missing_onward_movement_is_excluded_and_logged():
+    broken = dict(get_case_full("sar-002"))
+    broken["case_id"] = "sar-broken-missing-field"
+    broken.pop("onward_movement")
+
+    with _tmp_case_dir({"case_sar_zzz_broken.json": json.dumps(broken)}) as (cases, invalid_count, log):
+        assert "sar-broken-missing-field" not in cases
+        assert invalid_count == 1
+        assert "onward_movement" in log
+        assert "case_sar_zzz_broken.json" in log
+        # valid cases still load and serve
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+        assert get_case_display("sar-003") is not None
+
+
+def test_case_with_malformed_json_is_excluded_and_logged():
+    with _tmp_case_dir({"case_sar_zzz_malformed.json": "{not valid json"}) as (cases, invalid_count, log):
+        assert invalid_count == 1
+        assert "invalid JSON" in log
+        assert "case_sar_zzz_malformed.json" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+        assert get_case_display("sar-003") is not None
+
+
+def test_case_with_duplicate_case_id_is_excluded_and_logged():
+    duplicate = dict(get_case_full("sar-002"))
+    duplicate["title"] = "DUPLICATE PROBE TITLE, MUST NOT WIN"
+
+    with _tmp_case_dir({"case_sar_zzz_duplicate.json": json.dumps(duplicate)}) as (cases, invalid_count, log):
+        assert invalid_count == 1
+        assert "duplicate" in log
+        assert "sar-002" in log
+        assert cases["sar-002"]["title"] == "The Weekend Courier"
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+        assert get_case_display("sar-003") is not None
 
 
 def test_existing_cases_remain_unchanged():
