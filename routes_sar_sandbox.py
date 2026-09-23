@@ -140,9 +140,8 @@ def _load_cases():
             "least case_sar_phase0_001.json was committed alongside this route module."
         )
 
-    cases = {}
-    seen_ids = set()
     invalid_count = 0
+    by_case_id = {}
 
     for path in case_paths:
         try:
@@ -186,17 +185,31 @@ def _load_cases():
             continue
 
         errors = _validate_case(case, path)
-        case_id = case.get("case_id") if isinstance(case, dict) else None
-
-        if not errors and case_id in seen_ids:
-            errors = [f"{path.name}: duplicate case_id {case_id!r}"]
-
         if errors:
             invalid_count += 1
+            case_id = case.get("case_id") if isinstance(case, dict) else None
             print(f"SAR sandbox case load error: file={path.name} case_id={case_id!r} errors={errors}")
             continue
 
-        seen_ids.add(case_id)
+        by_case_id.setdefault(case["case_id"], []).append((path, case))
+
+    # A case_id claimed by more than one file fails closed: every file
+    # claiming it is excluded, not just the ones after the first. Sorted
+    # filename order only controls which file is processed first, it is
+    # not a correctness signal, so letting the first-seen file silently win
+    # could just as easily keep a stale duplicate live as a corrected one,
+    # with no way for an operator to tell which happened from the log alone.
+    cases = {}
+    for case_id, entries in by_case_id.items():
+        if len(entries) > 1:
+            invalid_count += len(entries)
+            filenames = ", ".join(path.name for path, _ in entries)
+            print(
+                f"SAR sandbox case load error: case_id={case_id!r} claimed by multiple "
+                f"files ({filenames}), all excluded"
+            )
+            continue
+        (_, case), = entries
         cases[case_id] = case
 
     return cases, invalid_count
@@ -211,6 +224,21 @@ except FileNotFoundError as exc:
     _CASES_CACHE = {}
     _INVALID_CASES = 0
     _LOAD_ERROR = str(exc)
+
+print(f"sar_sandbox cases_loaded={len(_CASES_CACHE)} cases_invalid={_INVALID_CASES}")
+
+
+def get_load_status() -> dict:
+    """Counts only, safe for a public endpoint: no file names, case_ids or
+    error text, just how many cases loaded, how many were excluded, and
+    whether the zero-files case fired. main.py reads this instead of the
+    module's private globals directly, so /api/health stays decoupled from
+    this module's internal representation."""
+    return {
+        "cases_loaded": len(_CASES_CACHE),
+        "cases_invalid": _INVALID_CASES,
+        "load_error": _LOAD_ERROR is not None,
+    }
 
 
 def get_case_full(case_id: str) -> dict | None:

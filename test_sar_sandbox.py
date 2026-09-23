@@ -21,6 +21,7 @@ from routes_sar_sandbox import (
     get_case,
     get_case_display,
     get_case_full,
+    get_load_status,
     list_cases,
     score_extraction,
 )
@@ -340,16 +341,56 @@ def test_case_with_non_dict_top_level_number_is_excluded_and_logged():
 
 
 def test_case_with_duplicate_case_id_is_excluded_and_logged():
+    # Fails closed: both files claiming sar-002 are excluded, not just the
+    # second one processed. Filename order is not a correctness signal, so
+    # letting one silently win regardless of which file is actually right
+    # would be worse than dropping both and forcing a human to look.
     duplicate = dict(get_case_full("sar-002"))
     duplicate["title"] = "DUPLICATE PROBE TITLE, MUST NOT WIN"
 
     with _tmp_case_dir({"case_sar_zzz_duplicate.json": json.dumps(duplicate)}) as (cases, invalid_count, log):
-        assert invalid_count == 1
-        assert "duplicate" in log
+        assert invalid_count == 2
+        assert "claimed by multiple files" in log
         assert "sar-002" in log
-        assert cases["sar-002"]["title"] == "The Weekend Courier"
-        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+        assert "case_sar_002.json" in log
+        assert "case_sar_zzz_duplicate.json" in log
+        assert "sar-002" not in cases
+        assert {"sar-phase0-001", "sar-003"}.issubset(cases)
+        assert get_case_display("sar-002") is None
         assert get_case_display("sar-003") is not None
+
+
+def test_get_load_status_with_all_cases_valid():
+    status = get_load_status()
+    assert status == {"cases_loaded": 3, "cases_invalid": 0, "load_error": False}
+
+
+def test_get_load_status_with_one_invalid_case():
+    broken = dict(get_case_full("sar-002"))
+    broken["case_id"] = "sar-broken-for-health-status"
+    broken.pop("onward_movement")
+
+    with _tmp_case_dir({"case_sar_zzz_broken_health.json": json.dumps(broken)}):
+        status = get_load_status()
+        assert status["cases_loaded"] == 3
+        assert status["cases_invalid"] == 1
+        assert status["load_error"] is False
+
+
+def test_health_endpoint_includes_sar_sandbox_counts_only():
+    # main.py must not read routes_sar_sandbox's private globals directly,
+    # only through get_load_status, and /api/health must stay 200 with its
+    # existing fields intact regardless of the SAR sandbox load state.
+    from fastapi.testclient import TestClient
+    from main import app
+
+    response = TestClient(app).get("/api/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "screening_backend" in body
+    assert "api_key_configured" in body
+    assert body["sar_sandbox"] == {"cases_loaded": 3, "cases_invalid": 0, "load_error": False}
 
 
 def test_existing_cases_remain_unchanged():

@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from screening import ScreeningEngine, AdverseMediaEngine, OPENSANCTIONS_API_KEY
 from routes_scenario_lab import router as scenario_lab_router
 from routes_guide_chat import router as guide_chat_router
-from routes_sar_sandbox import router as sar_sandbox_router
+from routes_sar_sandbox import router as sar_sandbox_router, get_load_status as sar_sandbox_load_status
 
 app = FastAPI(title="FinCrimeRadar API", version="1.0.0")
 app.include_router(scenario_lab_router)
@@ -159,10 +159,14 @@ def screen(
 
 @app.get("/api/health")
 def health():
+    # Render's healthCheckPath. Status and the existing fields never change
+    # based on SAR sandbox load state, whatever it is: counts only, via the
+    # module's own helper, never this module reading its private globals.
     return {
         "status": "ok",
         "screening_backend": "opensanctions_api",
         "api_key_configured": bool(OPENSANCTIONS_API_KEY),
+        "sar_sandbox": sar_sandbox_load_status(),
     }
 
 @app.get("/api/status")
