@@ -608,6 +608,17 @@ def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
     extraction is the extraction JSON (matching ExtractionResult's shape).
     case_red_flags is the case's own red_flags list, the answer key, never
     sent to the browser. Only this function ever sees the two side by side.
+
+    speculative_score is scored from extraction["_scoring_speculative_phrases"]
+    when present, the full normalised-verified list _project_verified_content
+    computes, never the narrower "speculative_phrases" list that also has to
+    pass the separate exact-text-recoverable check before it can be shown to
+    the client: a phrase in a curly-quote or case variant of the trainee's
+    own words is still speculative language the trainee used, and the
+    penalty for it must not become avoidable just because the server cannot
+    safely echo it back verbatim. Falls back to "speculative_phrases" for
+    callers (mainly tests) that score a plain extraction dict directly,
+    without going through _project_verified_content first.
     """
     valid_red_flag_ids = {rf["id"] for rf in case_red_flags}
 
@@ -621,7 +632,7 @@ def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
 
     transaction_score = 10 if extraction["transaction_detail_cited"] else 0
 
-    spec_count = len(extraction["speculative_phrases"])
+    spec_count = len(extraction.get("_scoring_speculative_phrases", extraction["speculative_phrases"]))
     if spec_count == 0:
         speculative_score = 10
     elif spec_count <= 2:
@@ -741,12 +752,25 @@ def _project_verified_content(extraction: dict, req: ExtractRequest, case_red_fl
     red_flags_mentioned is intersected with the case's own red flag ids,
     deduplicated, kept in the model's original relative order (dict keys
     preserve first-seen order, this uses that to dedupe without
-    reordering). speculative_phrases keeps only entries _verify_and_locate
-    both verifies and can return the trainee's own exact text for, the
-    same reasoning as the quote fields: the model could otherwise claim a
-    phrase exists, or return its own paraphrase of one, to move
-    speculative_score without ever showing the trainee text that is
-    genuinely theirs."""
+    reordering).
+
+    speculative_phrases splits into two outputs, since crediting and
+    displaying it turned out to need different rules. A fabricated phrase,
+    one that fails _verify_and_locate under both the exact and the
+    normalised rule, ends up in neither: the model could otherwise claim a
+    phrase exists, or invent one outright, to move speculative_score
+    without it ever having appeared in what the trainee wrote. A phrase
+    that verifies, exactly or only through normalisation, always earns its
+    penalty, in "_scoring_speculative_phrases", which score_extraction
+    reads: a normalisation-only match (curly quotes, dash style, case) is
+    still the trainee's own speculative words, and the penalty for using
+    them must not become avoidable merely because the server cannot safely
+    echo the phrase back character for character. Only a phrase whose
+    exact text is itself a substring of the narrative is also kept in
+    "speculative_phrases", the field actually returned to the client:
+    display always shows the trainee's own exact text, never a normalised
+    rewrite of it, so a phrase that verifies only through normalisation is
+    scored but not shown."""
     sections = [req.intro, req.investigative_body, req.final_disposition]
 
     for w in extraction["five_ws"].values():
@@ -763,12 +787,16 @@ def _project_verified_content(extraction: dict, req: ExtractRequest, case_red_fl
         dict.fromkeys(rid for rid in extraction["red_flags_mentioned"] if rid in valid_red_flag_ids)
     )
 
-    verified_phrases = []
+    scoring_phrases = []
+    display_phrases = []
     for phrase in extraction["speculative_phrases"]:
         verified, span = _verify_and_locate(phrase, sections)
-        if verified and span is not None:
-            verified_phrases.append(span)
-    extraction["speculative_phrases"] = verified_phrases
+        if verified:
+            scoring_phrases.append(phrase)
+            if span is not None:
+                display_phrases.append(span)
+    extraction["_scoring_speculative_phrases"] = scoring_phrases
+    extraction["speculative_phrases"] = display_phrases
 
     return extraction
 

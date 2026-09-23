@@ -1052,6 +1052,72 @@ def test_majority_vote_excludes_poisoned_content_confined_to_the_disagreeing_run
     assert body["extraction"]["speculative_phrases"] == []
 
 
+def _speculative_test_setup(phrase):
+    """A minimal request/extraction pair for exercising just the
+    speculative-phrase split in _project_verified_content: everything else
+    (five_ws, transaction, red flags) is clean so speculative_score is the
+    only thing that can move."""
+    req = ExtractRequest(
+        case_id="sar-003",
+        intro="A short generic intro naming no poisoned content.",
+        investigative_body="A short generic investigative body naming no poisoned content.",
+        final_disposition="We suspect the funds may be the proceeds of crime.",
+    )
+    extraction = {
+        "five_ws": {w: {"addressed": False, "quote": None} for w in ["who", "what", "when", "where", "why"]},
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": [phrase],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+    return req, extraction
+
+
+def test_speculative_normalisation_only_match_is_penalised_but_not_displayed():
+    # A phrase that differs from the narrative only by case (the same rule
+    # covers curly quotes) still verifies under _verify_and_locate's
+    # normalised comparison, but its exact text is not a substring of the
+    # narrative, so it cannot be safely echoed back. The penalty must still
+    # apply: it is the trainee's own speculative language either way.
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    case_variant_phrase = "WE SUSPECT THE FUNDS MAY BE THE PROCEEDS OF CRIME."
+    req, extraction = _speculative_test_setup(case_variant_phrase)
+
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
+    assert projected["speculative_phrases"] == []
+    assert projected["_scoring_speculative_phrases"] == [case_variant_phrase]
+
+    scoring = score_extraction(projected, case_red_flags)
+    assert scoring["speculative_score"] == 5
+
+
+def test_speculative_exact_match_is_penalised_and_displayed():
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    exact_phrase = "We suspect the funds may be the proceeds of crime."
+    req, extraction = _speculative_test_setup(exact_phrase)
+
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
+    assert projected["speculative_phrases"] == [exact_phrase]
+    assert projected["_scoring_speculative_phrases"] == [exact_phrase]
+
+    scoring = score_extraction(projected, case_red_flags)
+    assert scoring["speculative_score"] == 5
+
+
+def test_speculative_fabricated_phrase_is_neither_penalised_nor_displayed():
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    fabricated_phrase = "This is clearly obvious money laundering with no factual basis."
+    req, extraction = _speculative_test_setup(fabricated_phrase)
+
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
+    assert projected["speculative_phrases"] == []
+    assert projected["_scoring_speculative_phrases"] == []
+
+    scoring = score_extraction(projected, case_red_flags)
+    assert scoring["speculative_score"] == 10
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
