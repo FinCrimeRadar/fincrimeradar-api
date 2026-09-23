@@ -13,11 +13,12 @@ import tempfile
 from pathlib import Path
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 import routes_sar_sandbox
 from routes_sar_sandbox import (
     _CASES_CACHE,
-    _validate_case,
+    SarCase,
     get_case,
     get_case_display,
     get_case_full,
@@ -25,6 +26,8 @@ from routes_sar_sandbox import (
     list_cases,
     score_extraction,
 )
+
+FIXTURES_DIR = Path(__file__).parent / "tests" / "fixtures"
 
 EXPECTED_DISPLAY_FIELDS = {
     "title", "subject", "activity_window", "transactions",
@@ -34,6 +37,25 @@ EXPECTED_DISPLAY_FIELDS = {
 
 def get_display_json(case_id):
     return json.loads(get_case(case_id).body)
+
+
+def test_display_output_is_byte_identical_to_the_pre_pydantic_golden_fixtures():
+    # Golden fixtures captured from get_case(id).body on main at 6e67875,
+    # before the declarative pydantic schema replaced the hand rolled
+    # _validate_case/_display_fields. Any difference here is a regression
+    # in what the three real, already shipped cases render as, not just a
+    # schema change: this is a blocker to report, never a reason to update
+    # these files. Byte identical, not just equal after reparsing, so a
+    # key order or separator change would also be caught.
+    golden_files = {
+        "sar-002": "sar-002.json",
+        "sar-003": "sar-003.json",
+        "sar-phase0-001": "sar-phase0-001.json",
+    }
+    for case_id, filename in golden_files.items():
+        golden = (FIXTURES_DIR / filename).read_bytes()
+        actual = get_case(case_id).body
+        assert actual == golden, f"{case_id} display output changed from the golden fixture"
 
 
 def test_existing_and_sar_003_cases_load_via_glob():
@@ -182,9 +204,11 @@ def test_every_committed_case_is_valid():
     assert case_paths, "no case_sar_*.json files found to validate"
     for path in case_paths:
         with open(path, "r", encoding="utf-8") as f:
-            case = json.load(f)
-        errors = _validate_case(case, path)
-        assert errors == [], f"{path.name} failed validation: {errors}"
+            data = json.load(f)
+        try:
+            SarCase.model_validate(data)
+        except ValidationError as exc:
+            raise AssertionError(f"{path.name} failed validation: {exc.errors(include_input=False)}")
     assert routes_sar_sandbox._INVALID_CASES == 0
 
 
@@ -272,20 +296,23 @@ def test_case_with_non_utf8_bytes_is_excluded_and_logged():
         assert get_case_display("sar-003") is not None
 
 
-class _RecursionErrorOnTarget:
-    """Wraps the real json module, raising RecursionError only for a named
-    target file and delegating everything else (including json.dumps used
-    elsewhere in this test file, and the real load for every other case
-    file _load_cases reads in the same pass) to the real module."""
+class _RecursionErrorOnContent:
+    """Wraps the real json module, raising RecursionError only when loads()
+    is called with one exact sentinel text and delegating everything else
+    (including json.dumps used elsewhere in this test file, and the real
+    parse for every other case file _load_cases reads in the same pass) to
+    the real module. _load_cases reads the file itself now and calls
+    json.loads(text, ...), so the target is matched on content, not on a
+    file object's name the way an earlier version of this wrapper did."""
 
-    def __init__(self, real_json, target_name):
+    def __init__(self, real_json, target_text):
         self._real = real_json
-        self._target_name = target_name
+        self._target_text = target_text
 
-    def load(self, f):
-        if self._target_name in getattr(f, "name", ""):
+    def loads(self, text, *args, **kwargs):
+        if text == self._target_text:
             raise RecursionError("maximum recursion depth exceeded while decoding a JSON object")
-        return self._real.load(f)
+        return self._real.loads(text, *args, **kwargs)
 
     def __getattr__(self, attr):
         return getattr(self._real, attr)
@@ -303,14 +330,16 @@ def test_case_with_deeply_nested_json_is_excluded_and_logged():
     # depends on hitting that threshold. It replaces the json name inside
     # routes_sar_sandbox's own module namespace only (not the shared json
     # module every other import of it sees) with a wrapper that raises
-    # RecursionError for one named file and defers to the real json module
-    # for every other file _load_cases reads, so this is deterministic on
-    # every platform, not tuned to one machine's stack depth.
+    # RecursionError for one sentinel content string and defers to the
+    # real json module for every other file _load_cases reads, so this is
+    # deterministic on every platform, not tuned to one machine's stack
+    # depth.
     target_name = "case_sar_zzz_deepnest.json"
+    sentinel_text = '{"sentinel": "trigger-recursion-error"}'
     real_json = routes_sar_sandbox.json
-    routes_sar_sandbox.json = _RecursionErrorOnTarget(real_json, target_name)
+    routes_sar_sandbox.json = _RecursionErrorOnContent(real_json, sentinel_text)
     try:
-        with _tmp_case_dir({target_name: "[1, 2, 3]"}) as (cases, invalid_count, log):
+        with _tmp_case_dir({target_name: sentinel_text}) as (cases, invalid_count, log):
             assert invalid_count == 1
             assert "could not read or parse file" in log
             assert "RecursionError" in log
@@ -351,11 +380,12 @@ def test_oversized_case_file_is_excluded_and_logged():
 
 
 def test_case_with_non_dict_top_level_list_is_excluded_and_logged():
-    # _validate_case must return an error, never raise, for any valid
-    # json.load result whose top level is not an object.
+    # SarCase.model_validate must return a ValidationError, never raise
+    # anything else, for any valid json.loads result whose top level is
+    # not an object. Pydantic's own error type for this is "model_type".
     with _tmp_case_dir({"case_sar_zzz_toplevel_list.json": json.dumps([1, 2, 3])}) as (cases, invalid_count, log):
         assert invalid_count == 1
-        assert "top level must be an object" in log
+        assert "model_type" in log
         assert "case_sar_zzz_toplevel_list.json" in log
         assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
         assert get_case_display("sar-003") is not None
@@ -364,10 +394,189 @@ def test_case_with_non_dict_top_level_list_is_excluded_and_logged():
 def test_case_with_non_dict_top_level_number_is_excluded_and_logged():
     with _tmp_case_dir({"case_sar_zzz_toplevel_number.json": "42"}) as (cases, invalid_count, log):
         assert invalid_count == 1
-        assert "top level must be an object" in log
+        assert "model_type" in log
         assert "case_sar_zzz_toplevel_number.json" in log
         assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
         assert get_case_display("sar-003") is not None
+
+
+def test_answer_key_content_nested_under_subject_field_is_excluded():
+    # F1 (external review): a case file crafted so subject.entity_name
+    # itself carries a nested object containing red_flags and
+    # distractor_facts content, trying to smuggle answer key material
+    # through a field the schema expects to be a plain string. Strict
+    # typing rejects the wrong shape outright, so the whole file is
+    # excluded and the sentinel can never reach any display output.
+    broken = dict(get_case_full("sar-002"))
+    sentinel = "SMUGGLED-ANSWER-KEY-SENTINEL"
+    broken["case_id"] = "sar-smuggle-test"
+    broken["subject"] = dict(broken["subject"])
+    broken["subject"]["entity_name"] = {
+        "red_flags": [{"id": "rf1", "label": sentinel}],
+        "distractor_facts": [sentinel],
+    }
+
+    with _tmp_case_dir({"case_sar_zzz_smuggle.json": json.dumps(broken)}) as (cases, invalid_count, log):
+        assert "sar-smuggle-test" not in cases
+        assert invalid_count == 1
+        assert "subject.entity_name" in log
+        assert sentinel not in log
+        for case_id in cases:
+            assert sentinel not in json.dumps(get_case_display(case_id))
+
+
+def test_deeply_nested_array_in_a_display_leaf_is_excluded():
+    # F2: a 5000 deep nested array standing in for a plain string display
+    # field. This depth does not necessarily raise RecursionError on every
+    # machine (confirmed it parses clean here), so this exercises the
+    # fallback that matters regardless: SarCase's strict string typing
+    # rejects the wrong shape, excluding the file either way.
+    broken = dict(get_case_full("sar-002"))
+    broken["case_id"] = "sar-deepleaf-test"
+    text = json.dumps(broken).replace(
+        '"Personal current account customer"', "[" * 5000 + "]" * 5000, 1
+    )
+
+    with _tmp_case_dir({"case_sar_zzz_deepleaf.json": text}) as (cases, invalid_count, log):
+        assert "sar-deepleaf-test" not in cases
+        assert invalid_count == 1
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+
+
+def test_nan_in_amount_gbp_is_excluded():
+    # F2: json.loads's parse_constant hook rejects the bare NaN token
+    # before it ever reaches pydantic, wherever it appears in the file.
+    broken = dict(get_case_full("sar-002"))
+    broken["case_id"] = "sar-nan-test"
+    text = json.dumps(broken).replace("480", "NaN", 1)
+
+    with _tmp_case_dir({"case_sar_zzz_nan.json": text}) as (cases, invalid_count, log):
+        assert "sar-nan-test" not in cases
+        assert invalid_count == 1
+        assert "disallowed JSON constant" in log
+        assert "NaN" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+
+
+def test_infinity_in_amount_gbp_is_excluded():
+    broken = dict(get_case_full("sar-002"))
+    broken["case_id"] = "sar-infinity-test"
+    text = json.dumps(broken).replace("480", "Infinity", 1)
+
+    with _tmp_case_dir({"case_sar_zzz_infinity.json": text}) as (cases, invalid_count, log):
+        assert "sar-infinity-test" not in cases
+        assert invalid_count == 1
+        assert "disallowed JSON constant" in log
+        assert "Infinity" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+
+
+def test_case_id_with_trailing_whitespace_is_rejected():
+    # F3: rejected, never stripped or normalised. The real sar-002 file
+    # still loads unaffected; this one is simply excluded.
+    broken = dict(get_case_full("sar-002"))
+    broken["case_id"] = "sar-002 "
+
+    with _tmp_case_dir({"case_sar_zzz_trailing_space.json": json.dumps(broken)}) as (cases, invalid_count, log):
+        assert invalid_count == 1
+        assert "case_id" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+
+
+def test_whitespace_only_case_id_is_rejected():
+    broken = dict(get_case_full("sar-002"))
+    broken["case_id"] = "   "
+
+    with _tmp_case_dir({"case_sar_zzz_whitespace_id.json": json.dumps(broken)}) as (cases, invalid_count, log):
+        assert invalid_count == 1
+        assert "case_id" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+
+
+def test_case_id_failing_the_pattern_is_rejected():
+    for bad_id in ["SAR-002", "sar_002", "not-sar-prefixed", "sar-", "sar--002", "sar-002-", "sar"]:
+        broken = dict(get_case_full("sar-002"))
+        broken["case_id"] = bad_id
+        with _tmp_case_dir({"case_sar_zzz_badid.json": json.dumps(broken)}) as (cases, invalid_count, log):
+            assert invalid_count == 1, f"{bad_id!r} should have been rejected by the case_id pattern"
+            assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+
+
+def test_unknown_extra_key_anywhere_is_excluded():
+    # extra="forbid" on every model: an unrecognised field anywhere in the
+    # document, not only at the top level, excludes the whole file.
+    broken = dict(get_case_full("sar-002"))
+    broken["case_id"] = "sar-extrakey-test"
+    broken["subject"] = dict(broken["subject"])
+    broken["subject"]["unexpected_field"] = "should not be accepted"
+
+    with _tmp_case_dir({"case_sar_zzz_extrakey.json": json.dumps(broken)}) as (cases, invalid_count, log):
+        assert "sar-extrakey-test" not in cases
+        assert invalid_count == 1
+        assert "subject.unexpected_field" in log
+        assert "extra_forbidden" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+
+
+class _CountingJson:
+    """Wraps the real json module, counting calls to loads() so a test can
+    confirm parsing was never attempted, without changing behaviour."""
+
+    def __init__(self, real_json):
+        self._real = real_json
+        self.load_calls = 0
+
+    def loads(self, *args, **kwargs):
+        self.load_calls += 1
+        return self._real.loads(*args, **kwargs)
+
+    def __getattr__(self, attr):
+        return getattr(self._real, attr)
+
+
+def test_file_grown_past_the_cap_is_excluded_before_json_parsing_is_attempted():
+    # F5: simulates a file whose read() returns more than the cap
+    # regardless of what is actually committed on disk, by monkeypatching
+    # the open name inside routes_sar_sandbox's own module namespace to
+    # return a fake file object for one target only, real open for
+    # everything else. Confirms json.loads is called exactly three times,
+    # once per real committed case, never for the grown target.
+    cap = routes_sar_sandbox._CASE_FILE_SIZE_CAP_BYTES
+    target_name = "case_sar_zzz_grown.json"
+    real_open = open
+
+    class _GrownFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def read(self, n=-1):
+            return b"x" * (cap + 1)
+
+    def fake_open(path, mode="r", *args, **kwargs):
+        if target_name in str(path):
+            return _GrownFile()
+        return real_open(path, mode, *args, **kwargs)
+
+    real_json = routes_sar_sandbox.json
+    counting_json = _CountingJson(real_json)
+    routes_sar_sandbox.json = counting_json
+    routes_sar_sandbox.open = fake_open
+    try:
+        with _tmp_case_dir({target_name: "{}"}) as (cases, invalid_count, log):
+            assert invalid_count == 1
+            assert "size cap" in log
+            assert target_name in log
+            assert counting_json.load_calls == 3, (
+                "json.loads must be called only for the three real cases, "
+                "never for the file whose read() exceeded the cap"
+            )
+            assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+    finally:
+        routes_sar_sandbox.json = real_json
+        del routes_sar_sandbox.open
 
 
 def test_case_with_duplicate_case_id_is_excluded_and_logged():

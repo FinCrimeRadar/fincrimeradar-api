@@ -23,15 +23,17 @@ excluded until someone deliberately adds it to this list.
 """
 
 import json
+import re
 import time
 from collections import deque
 from pathlib import Path
+from typing import Optional
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 load_dotenv()
 
@@ -42,77 +44,114 @@ CASE_DIR = Path(__file__).parent
 CASE_GLOB = "case_sar_*.json"
 
 
-# The shape every case file must have, derived from what the rest of this
-# module actually reads unfiltered: _load_cases's own dict key, list_cases
-# and get_case_display's top level accesses, and score_extraction's
-# `rf["id"] for rf in case_red_flags`. Nested whitelisted fields (subject,
-# activity_window, transaction and onward_movement sub-keys) are read
-# through _display_fields's `if key in record`, which already tolerates a
-# missing individual field, different case types use different subject
-# sub-fields, so those are not required here. distractor_facts is never
-# indexed by key, only serialised whole into the extraction prompt, but is
-# validated as a list anyway since a case with no distractor_facts at all
-# would defeat the point of a training case with a review-trigger red
-# herring, per the case_sar_003.json pattern this schema was audited against.
-_REQUIRED_CASE_SCHEMA = {
-    "case_id": str,
-    "title": str,
-    "subject": dict,
-    "activity_window": dict,
-    "transactions": list,
-    "onward_movement": dict,
-    "supporting_facts": list,
-    "red_flags": list,
-    "distractor_facts": list,
-}
+# Declarative case schema. Every field and its type is derived from the
+# three committed case files plus the pre-existing display whitelist
+# tuples this replaces. strict=True and extra="forbid" on every model:
+# an unrecognised field anywhere, not just at the top level, excludes the
+# whole file rather than silently passing through to server side storage,
+# and a value of the wrong type (a nested object or array where a string
+# is expected, for example) is rejected rather than coerced.
+_CASE_ID_PATTERN = re.compile(r"^sar-[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
-def _validate_case(case, path: Path) -> list[str]:
-    """Structural validation only, run once per case file at load time.
-    Returns an empty list for a valid case. An error string may include the
-    case_id itself, a synthetic training-case slug such as "sar-003", not
-    sensitive data, since the caller logs it to identify which file failed.
-    It never includes actual case content: no subject, transaction,
-    red_flags or distractor_facts values, only key names, list indices and
-    type names."""
-    if not isinstance(case, dict):
-        return [f"{path.name}: top level must be an object"]
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 
-    errors = []
-    for key, expected_type in _REQUIRED_CASE_SCHEMA.items():
-        if key not in case:
-            errors.append(f"{path.name}: missing required key {key!r}")
-            continue
-        if not isinstance(case[key], expected_type):
-            errors.append(
-                f"{path.name}: key {key!r} must be {expected_type.__name__}, "
-                f"got {type(case[key]).__name__}"
-            )
 
-    if isinstance(case.get("case_id"), str) and not case["case_id"]:
-        errors.append(f"{path.name}: case_id must not be empty")
+class SubjectModel(_StrictModel):
+    # Case flavours vary widely here (a personal account case has none of
+    # sar-003's entity_name/director/review_trigger fields, for example),
+    # confirmed against all three committed files, so every field is
+    # optional. account_opened happens to be present in all three seen so
+    # far, but nothing in the schema's contract guarantees that, so it is
+    # optional too rather than presumed invariant from three data points.
+    entity_name: Optional[str] = None
+    entity_type: Optional[str] = None
+    customer_type: Optional[str] = None
+    account_type: Optional[str] = None
+    account_opened: Optional[str] = None
+    declared_business: Optional[str] = None
+    declared_circumstances: Optional[str] = None
+    established_profile: Optional[str] = None
+    director: Optional[str] = None
+    review_trigger: Optional[str] = None
+    practice_instruction: Optional[str] = None
 
-    if isinstance(case.get("title"), str) and not case["title"]:
-        errors.append(f"{path.name}: title must not be empty")
 
-    if isinstance(case.get("transactions"), list):
-        for i, txn in enumerate(case["transactions"]):
-            if not isinstance(txn, dict):
-                errors.append(f"{path.name}: transactions[{i}] must be an object")
+class ActivityWindowModel(_StrictModel):
+    start: str
+    end: str
 
-    if isinstance(case.get("supporting_facts"), list):
-        for i, fact in enumerate(case["supporting_facts"]):
-            if not isinstance(fact, str):
-                errors.append(f"{path.name}: supporting_facts[{i}] must be a string")
 
-    if isinstance(case.get("red_flags"), list):
-        for i, rf in enumerate(case["red_flags"]):
-            if not isinstance(rf, dict):
-                errors.append(f"{path.name}: red_flags[{i}] must be an object")
-            elif not isinstance(rf.get("id"), str) or not rf["id"]:
-                errors.append(f"{path.name}: red_flags[{i}] missing a non-empty string 'id'")
+class TransactionModel(_StrictModel):
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False, populate_by_name=True)
 
-    return errors
+    date: str
+    from_: str = Field(alias="from", min_length=1)
+    amount_gbp: int
+    description: str
+
+
+class RedFlagModel(_StrictModel):
+    id: str = Field(min_length=1)
+    label: str
+
+
+class OnwardMovementModel(_StrictModel):
+    pattern: str
+    destination_note: str
+    total_moved_gbp: int
+
+
+class SarCase(_StrictModel):
+    case_id: str
+    title: str
+    module: str
+    subject: SubjectModel
+    activity_window: ActivityWindowModel
+    transactions: list[TransactionModel]
+    onward_movement: OnwardMovementModel
+    supporting_facts: list[str]
+    red_flags: list[RedFlagModel]
+    distractor_facts: list[str]
+
+    @field_validator("case_id")
+    @classmethod
+    def _case_id_matches_pattern(cls, value: str) -> str:
+        # Rejects, never strips or normalises: a value with leading or
+        # trailing whitespace, or any character outside the pattern, fails
+        # rather than being silently cleaned up into something that
+        # happens to match.
+        if not _CASE_ID_PATTERN.match(value):
+            raise ValueError("case_id does not match the required pattern")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_empty(cls, value: str) -> str:
+        if not value:
+            raise ValueError("title must not be empty")
+        return value
+
+
+def _reject_json_constant(constant: str) -> None:
+    # json.loads's parse_constant hook: called for the bare tokens NaN,
+    # Infinity and -Infinity, wherever they appear in the document, before
+    # any of that value ever reaches pydantic. Raising here means a
+    # constant hidden anywhere in the file, not just in a numeric field
+    # pydantic would reject anyway, fails the same way a syntax error does.
+    raise ValueError(f"disallowed JSON constant: {constant}")
+
+
+def _validation_error_summary(exc: ValidationError) -> list[dict]:
+    """Location and error type only, from pydantic's own structured error
+    list, with the offending input value explicitly omitted. Never
+    includes case content, only field paths (schema-derived, not
+    attacker-controlled) and pydantic's own error type names."""
+    return [
+        {"loc": ".".join(str(part) for part in error["loc"]), "type": error["type"]}
+        for error in exc.errors(include_input=False)
+    ]
 
 
 # The three committed case files run 2.8 to 4.2 KB. 64 KB is generous
@@ -145,31 +184,30 @@ def _load_cases():
 
     for path in case_paths:
         try:
-            # Size checked before opening, so an oversized file is rejected
-            # without reading its content into memory at all. Same broad
-            # except as the read/parse below and for the same reason:
-            # path.stat() itself can raise (permissions, a race against the
-            # file being removed after the glob above), and this loop's one
-            # job is that no single file, in any way it can fail, is
-            # allowed to crash this module's import.
-            size = path.stat().st_size
-            if size > _CASE_FILE_SIZE_CAP_BYTES:
-                raise _CaseFileTooLarge(
-                    f"file exceeds {_CASE_FILE_SIZE_CAP_BYTES} byte size cap: {size} bytes"
-                )
-            with open(path, "r", encoding="utf-8") as f:
-                case = json.load(f)
+            # Read at most cap+1 bytes: a file at or under the cap is read
+            # in full in one call, an oversized file never has more than
+            # one byte past the cap actually pulled into memory, so growth
+            # is caught by the length of what came back, not a separate
+            # stat() call beforehand. Same broad except as the decode and
+            # parse below and for the same reason: this loop's one job is
+            # that no single file, in any way it can fail, is allowed to
+            # crash this module's import.
+            with open(path, "rb") as f:
+                raw = f.read(_CASE_FILE_SIZE_CAP_BYTES + 1)
+            if len(raw) > _CASE_FILE_SIZE_CAP_BYTES:
+                raise _CaseFileTooLarge(f"file exceeds {_CASE_FILE_SIZE_CAP_BYTES} byte size cap")
+            text = raw.decode("utf-8")
+            data = json.loads(text, parse_constant=_reject_json_constant)
         except _CaseFileTooLarge as exc:
             invalid_count += 1
             print(f"SAR sandbox case load error: file={path.name} case_id=unknown errors=['{exc}']")
             continue
         except Exception as exc:
-            # Deliberately broad, scoped to only this read and parse, not
-            # the rest of the loop body. Two rounds of code review each
-            # found a different concrete exception type that a narrower
-            # catch missed here: json.JSONDecodeError alone missed
-            # UnicodeDecodeError (open()'s utf-8 decoding happens lazily as
-            # json.load() reads the file, not at open() itself), and
+            # Deliberately broad. Three rounds of review each found a
+            # different concrete exception type that a narrower catch
+            # missed here: json.JSONDecodeError alone missed
+            # UnicodeDecodeError (utf-8 decoding happens on this loop's
+            # own explicit decode call now, not lazily inside json.load),
             # (OSError, ValueError) still missed RecursionError, which
             # CPython's json decoder raises on deeply nested input and
             # which is neither. The one property that actually matters,
@@ -184,14 +222,18 @@ def _load_cases():
             )
             continue
 
-        errors = _validate_case(case, path)
-        if errors:
+        try:
+            case = SarCase.model_validate(data)
+        except ValidationError as exc:
             invalid_count += 1
-            case_id = case.get("case_id") if isinstance(case, dict) else None
-            print(f"SAR sandbox case load error: file={path.name} case_id={case_id!r} errors={errors}")
+            case_id = data.get("case_id") if isinstance(data, dict) else None
+            print(
+                f"SAR sandbox case load error: file={path.name} case_id={case_id!r} "
+                f"errors={_validation_error_summary(exc)}"
+            )
             continue
 
-        by_case_id.setdefault(case["case_id"], []).append((path, case))
+        by_case_id.setdefault(case.case_id, []).append((path, case))
 
     # A case_id claimed by more than one file fails closed: every file
     # claiming it is excluded, not just the ones after the first. Sorted
@@ -199,6 +241,8 @@ def _load_cases():
     # not a correctness signal, so letting the first-seen file silently win
     # could just as easily keep a stale duplicate live as a corrected one,
     # with no way for an operator to tell which happened from the log alone.
+    # Grouped on the validated case_id, after the pattern check above, so a
+    # duplicate is only ever a genuine collision on an accepted value.
     cases = {}
     for case_id, entries in by_case_id.items():
         if len(entries) > 1:
@@ -244,53 +288,112 @@ def get_load_status() -> dict:
 def get_case_full(case_id: str) -> dict | None:
     """Server side only. Includes red_flags and distractor_facts, the
     answer key. Never return this directly from an API endpoint."""
-    return _CASES_CACHE.get(case_id)
-
-
-_SUBJECT_DISPLAY_FIELDS = (
-    "entity_name",
-    "entity_type",
-    "customer_type",
-    "account_type",
-    "account_opened",
-    "declared_business",
-    "declared_circumstances",
-    "established_profile",
-    "director",
-    "review_trigger",
-    "practice_instruction",
-)
-_ACTIVITY_WINDOW_DISPLAY_FIELDS = ("start", "end")
-_TRANSACTION_DISPLAY_FIELDS = ("date", "from", "amount_gbp", "description")
-_ONWARD_MOVEMENT_DISPLAY_FIELDS = ("pattern", "destination_note", "total_moved_gbp")
-
-
-def _display_fields(record: dict, allowed_fields: tuple[str, ...]) -> dict:
-    return {key: record[key] for key in allowed_fields if key in record}
-
-
-def get_case_display(case_id: str) -> dict | None:
-    """The only case data ever sent to the browser. Both top-level and
-    nested object fields are whitelisted, so fields added to case JSON later
-    remain server-side until deliberately added here."""
     case = _CASES_CACHE.get(case_id)
     if case is None:
         return None
-    return {
-        "title": case["title"],
-        "subject": _display_fields(case["subject"], _SUBJECT_DISPLAY_FIELDS),
-        "activity_window": _display_fields(
-            case["activity_window"], _ACTIVITY_WINDOW_DISPLAY_FIELDS
+    return case.model_dump(by_alias=True)
+
+
+# The display models mirror the corresponding SarCase sub-models field for
+# field today, but are deliberately kept as separate classes, not aliases
+# or a shared base. SarCase's extra="forbid" already means an unrecognised
+# field excludes the whole file at load time, but if a later case flavour
+# needs a genuinely new, non-displayable subject field, adding it to
+# SubjectModel alone must not automatically expose it to the browser: it
+# has to be added here too, on purpose, preserving the original exclude by
+# default intent this module's docstring describes.
+class SubjectDisplay(_StrictModel):
+    entity_name: Optional[str] = None
+    entity_type: Optional[str] = None
+    customer_type: Optional[str] = None
+    account_type: Optional[str] = None
+    account_opened: Optional[str] = None
+    declared_business: Optional[str] = None
+    declared_circumstances: Optional[str] = None
+    established_profile: Optional[str] = None
+    director: Optional[str] = None
+    review_trigger: Optional[str] = None
+    practice_instruction: Optional[str] = None
+
+
+class ActivityWindowDisplay(_StrictModel):
+    start: str
+    end: str
+
+
+class TransactionDisplay(_StrictModel):
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False, populate_by_name=True)
+
+    date: str
+    from_: str = Field(alias="from")
+    amount_gbp: int
+    description: str
+
+
+class OnwardMovementDisplay(_StrictModel):
+    pattern: str
+    destination_note: str
+    total_moved_gbp: int
+
+
+class SarCaseDisplay(_StrictModel):
+    title: str
+    subject: SubjectDisplay
+    activity_window: ActivityWindowDisplay
+    transactions: list[TransactionDisplay]
+    onward_movement: OnwardMovementDisplay
+    supporting_facts: list[str]
+
+
+def get_case_display(case_id: str) -> dict | None:
+    """The only case data ever sent to the browser. Built exclusively from
+    the validated SarCase's own typed fields, through SarCaseDisplay, never
+    by reading or copying the raw parsed dict: a field added to case JSON
+    later is either rejected by SarCase's extra="forbid" at load time, or,
+    if deliberately added to SarCase, still stays server side until also
+    deliberately added to the display models above."""
+    case = _CASES_CACHE.get(case_id)
+    if case is None:
+        return None
+    display = SarCaseDisplay(
+        title=case.title,
+        subject=SubjectDisplay(
+            entity_name=case.subject.entity_name,
+            entity_type=case.subject.entity_type,
+            customer_type=case.subject.customer_type,
+            account_type=case.subject.account_type,
+            account_opened=case.subject.account_opened,
+            declared_business=case.subject.declared_business,
+            declared_circumstances=case.subject.declared_circumstances,
+            established_profile=case.subject.established_profile,
+            director=case.subject.director,
+            review_trigger=case.subject.review_trigger,
+            practice_instruction=case.subject.practice_instruction,
         ),
-        "transactions": [
-            _display_fields(transaction, _TRANSACTION_DISPLAY_FIELDS)
-            for transaction in case["transactions"]
+        activity_window=ActivityWindowDisplay(
+            start=case.activity_window.start,
+            end=case.activity_window.end,
+        ),
+        transactions=[
+            TransactionDisplay(
+                date=transaction.date,
+                from_=transaction.from_,
+                amount_gbp=transaction.amount_gbp,
+                description=transaction.description,
+            )
+            for transaction in case.transactions
         ],
-        "onward_movement": _display_fields(
-            case["onward_movement"], _ONWARD_MOVEMENT_DISPLAY_FIELDS
+        onward_movement=OnwardMovementDisplay(
+            pattern=case.onward_movement.pattern,
+            destination_note=case.onward_movement.destination_note,
+            total_moved_gbp=case.onward_movement.total_moved_gbp,
         ),
-        "supporting_facts": list(case["supporting_facts"]),
-    }
+        supporting_facts=list(case.supporting_facts),
+    )
+    # exclude_none matches the pre-pydantic behaviour exactly: a subject
+    # field absent from a given case flavour is omitted from the response
+    # entirely, not sent through as an explicit null.
+    return display.model_dump(by_alias=True, exclude_none=True)
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +741,7 @@ def list_cases():
     No rate limit, same reasoning as get_case below: non-sensitive data
     that's already part of get_case_display's whitelist."""
     return JSONResponse(
-        content=[{"case_id": case["case_id"], "title": case["title"]} for case in _CASES_CACHE.values()]
+        content=[{"case_id": case.case_id, "title": case.title} for case in _CASES_CACHE.values()]
     )
 
 
