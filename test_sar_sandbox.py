@@ -125,14 +125,28 @@ def test_sar_003_scoring_uses_only_the_six_approved_indicator_ids():
     assert "law enforcement" not in combined_labels
     assert "solicitor" not in combined_labels
 
+    # score_extraction only accepts data that has already been through
+    # _project_verified_content, so every quote here has to be a genuine,
+    # verifiable substring of the narrative below, not the placeholder "x"
+    # this test used before that requirement existed.
+    req = ExtractRequest(
+        case_id="sar-003",
+        intro="This SAR concerns a customer of the firm regarding suspicious activity.",
+        investigative_body="The customer conducted several unusual transactions during the review period.",
+        final_disposition="The account activity is reported as suspicious for review.",
+    )
     extraction = {
-        "five_ws": {w: {"addressed": True, "quote": "x"} for w in ["who", "what", "when", "where", "why"]},
+        "five_ws": {
+            w: {"addressed": True, "quote": req.intro} for w in ["who", "what", "when", "where", "why"]
+        },
         "red_flags_mentioned": ["rf1", "rf3", "rf6", "not-a-real-id"],
         "transaction_detail_cited": True,
+        "transaction_detail_quote": req.investigative_body,
         "speculative_phrases": [],
         "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
     }
-    scoring = score_extraction(extraction, case["red_flags"])
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case["red_flags"])
+    scoring = score_extraction(projected, case["red_flags"])
 
     # 3 valid ids matched (rf1, rf3, rf6) at 5 points each; the unmatched
     # not-a-real-id must not contribute, proving the score only trusts ids
@@ -718,8 +732,10 @@ def test_extract_response_never_leaks_unverified_model_content():
 def test_score_parity_for_the_23_sep_production_payloads():
     # F4 score parity: the three 23 Sep production smoke submissions (A,
     # B1, B2), their actual submitted narratives and their actual recorded
-    # extraction JSON, replayed through score_extraction directly, before
-    # and after adding _project_verified_content's filtering. A change
+    # extraction JSON, replayed through the current verification and
+    # scoring pipeline (_project_verified_content then score_extraction,
+    # score_extraction no longer accepts raw, unprojected extraction data)
+    # against the total each one actually scored in production. A change
     # would only appear if a recorded phrase was not an exact substring of
     # its own recorded narrative. All three were already clean, so the
     # expected result is no change at all.
@@ -814,24 +830,40 @@ def test_score_parity_for_the_23_sep_production_payloads():
     }
 
     for name, (narrative, extraction, recorded_total) in cases.items():
-        before = score_extraction(copy.deepcopy(extraction), red_flags)
-        assert before["total"] == recorded_total, (
-            f"{name}: recorded total does not match a fresh score_extraction "
-            f"call on the same recorded extraction, before any change here"
-        )
-
         req = ExtractRequest(**narrative)
-        filtered = routes_sar_sandbox._project_verified_content(
+        projected = routes_sar_sandbox._project_verified_content(
             copy.deepcopy(extraction), req, red_flags
         )
-        after = score_extraction(filtered, red_flags)
+        scoring = score_extraction(projected, red_flags)
 
-        assert after["total"] == before["total"], (
-            f"{name}: score changed after adding response projection "
-            f"(before={before['total']}, after={after['total']}). All three payloads' "
+        assert scoring["total"] == recorded_total, (
+            f"{name}: score under the current verification and scoring pipeline "
+            f"does not match the recorded production total "
+            f"(recorded={recorded_total}, actual={scoring['total']}). All three payloads' "
             f"phrases were exact substrings of their own recorded narrative, so no "
             f"change was expected; a change here means one of them was not."
         )
+
+
+def test_score_extraction_raises_on_unprojected_extraction():
+    # score_extraction trusts every field it reads and applies no
+    # verification of its own, so it must refuse to score data that was
+    # never passed through _project_verified_content, rather than silently
+    # falling back to the model's raw, unverified claims.
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    extraction = {
+        "five_ws": {w: {"addressed": False, "quote": None} for w in ["who", "what", "when", "where", "why"]},
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": [],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+    try:
+        score_extraction(extraction, case_red_flags)
+        raise AssertionError("expected KeyError for extraction data never passed through _project_verified_content")
+    except KeyError as exc:
+        assert "_project_verified_content" in str(exc)
 
 
 def test_normalise_for_match_collapses_whitespace_and_casefolds():

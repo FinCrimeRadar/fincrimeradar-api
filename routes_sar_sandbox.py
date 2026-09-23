@@ -605,21 +605,38 @@ def _strip_code_fence(text: str) -> str:
 def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
     """Pure scoring function, no API call, unit testable on its own.
 
-    extraction is the extraction JSON (matching ExtractionResult's shape).
-    case_red_flags is the case's own red_flags list, the answer key, never
-    sent to the browser. Only this function ever sees the two side by side.
+    extraction is the extraction JSON (matching ExtractionResult's shape),
+    already passed through _project_verified_content: this function trusts
+    every field it reads, including "_scoring_speculative_phrases", and
+    applies no verification of its own. case_red_flags is the case's own
+    red_flags list, the answer key, never sent to the browser. Only this
+    function ever sees the two side by side.
 
-    speculative_score is scored from extraction["_scoring_speculative_phrases"]
-    when present, the full normalised-verified list _project_verified_content
-    computes, never the narrower "speculative_phrases" list that also has to
-    pass the separate exact-text-recoverable check before it can be shown to
-    the client: a phrase in a curly-quote or case variant of the trainee's
-    own words is still speculative language the trainee used, and the
-    penalty for it must not become avoidable just because the server cannot
-    safely echo it back verbatim. Falls back to "speculative_phrases" for
-    callers (mainly tests) that score a plain extraction dict directly,
-    without going through _project_verified_content first.
+    speculative_score is scored from extraction["_scoring_speculative_phrases"],
+    the full normalised-verified list _project_verified_content computes,
+    never the narrower "speculative_phrases" list that also has to pass the
+    separate exact-text-recoverable check before it can be shown to the
+    client: a phrase in a curly-quote or case variant of the trainee's own
+    words is still speculative language the trainee used, and the penalty
+    for it must not become avoidable just because the server cannot safely
+    echo it back verbatim.
+
+    Deliberately no fallback to "speculative_phrases" here: a caller that
+    has not run extraction through _project_verified_content has not had
+    its five_ws/transaction booleans verified either, so silently scoring
+    it anyway on the raw list would create a second, unverified path to a
+    score, which is exactly what _project_verified_content exists to
+    prevent. Raises KeyError, with a message naming the missing key, so
+    that mistake fails loudly instead of quietly scoring unverified model
+    output.
     """
+    if "_scoring_speculative_phrases" not in extraction:
+        raise KeyError(
+            "score_extraction requires extraction['_scoring_speculative_phrases'], "
+            "set only by _project_verified_content: pass extraction through that "
+            "function first, scoring raw, unverified model output is not supported."
+        )
+
     valid_red_flag_ids = {rf["id"] for rf in case_red_flags}
 
     five_ws = extraction["five_ws"]
@@ -632,7 +649,7 @@ def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
 
     transaction_score = 10 if extraction["transaction_detail_cited"] else 0
 
-    spec_count = len(extraction.get("_scoring_speculative_phrases", extraction["speculative_phrases"]))
+    spec_count = len(extraction["_scoring_speculative_phrases"])
     if spec_count == 0:
         speculative_score = 10
     elif spec_count <= 2:
