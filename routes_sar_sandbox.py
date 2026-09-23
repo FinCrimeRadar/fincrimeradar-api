@@ -25,6 +25,7 @@ excluded until someone deliberately adds it to this list.
 import json
 import re
 import time
+import unicodedata
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -645,43 +646,129 @@ def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
     }
 
 
+_DASH_CHARS = "‐‑‒–—−"  # hyphen, non-breaking hyphen, figure dash, en dash, em dash, minus sign
+_CURLY_QUOTE_MAP = {
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": '"', "”": '"', "„": '"', "‟": '"',
+}
+_MIN_MATCH_WORDS = 3
+
+
+def _normalise_for_match(text: str) -> str:
+    """Normalises a text span so the same words with only cosmetic
+    differences (curly vs straight quotes, en or em dash vs hyphen, extra
+    or collapsed whitespace, case) compare equal. Used only to decide
+    whether a candidate quote or phrase genuinely appears in the
+    narrative, never returned to the client: see _verify_and_locate for
+    what text actually reaches the trainee."""
+    text = unicodedata.normalize("NFKC", text)
+    for dash in _DASH_CHARS:
+        text = text.replace(dash, "-")
+    for curly, straight in _CURLY_QUOTE_MAP.items():
+        text = text.replace(curly, straight)
+    return " ".join(text.split()).strip().casefold()
+
+
+def _verify_and_locate(candidate: str | None, sections: list[str]) -> tuple[bool, str | None]:
+    """Verifies a candidate quote or phrase against the submitted
+    narrative and decides what, if anything, can be shown back to the
+    trainee for it.
+
+    A candidate verifies if its normalised form is a substring of any
+    single section's normalised form. Review finding 2: the previous
+    exact-match-only rule could wrongly reject a genuine quote that
+    differs only in curly quotes, dash style, or incidental whitespace.
+    A candidate whose normalised length exceeds every individual
+    section's also gets one more attempt against the normalised join of
+    all sections, the only legitimate reason an honest quote could fail
+    every single-section check is that it spans a section boundary.
+
+    A candidate under three normalised words never verifies: a single
+    common word appearing somewhere in the narrative is not meaningful
+    evidence of anything, and would let a short, generic model quote earn
+    credit against unrelated text.
+
+    Returns (verified, original_span). original_span carries the
+    trainee's own characters, unchanged, and is populated only when the
+    candidate string itself, not a normalised rewrite of it, is an exact
+    substring of a single section or of the plain (non-normalised) join.
+    When a candidate verifies only through normalisation, its exact
+    original span in the narrative is not reconstructed here, so
+    original_span is None: callers that track a boolean and a quote
+    separately (five_ws, transaction detail) keep the boolean true and
+    drop only the display text; callers with no separate boolean
+    (speculative_phrases) drop the candidate outright, since there is no
+    other field left to carry the credit through.
+    """
+    if not candidate:
+        return False, None
+
+    normalised_candidate = _normalise_for_match(candidate)
+    if len(normalised_candidate.split()) < _MIN_MATCH_WORDS:
+        return False, None
+
+    normalised_sections = [_normalise_for_match(section) for section in sections]
+    plain_join = " ".join(sections)
+
+    for section, normalised_section in zip(sections, normalised_sections):
+        if normalised_candidate in normalised_section:
+            return True, candidate if candidate in section else None
+
+    if len(normalised_candidate) > max(len(section) for section in normalised_sections):
+        normalised_join = " ".join(normalised_sections)
+        if normalised_candidate in normalised_join:
+            return True, candidate if candidate in plain_join else None
+
+    return False, None
+
+
 def _project_verified_content(extraction: dict, req: ExtractRequest, case_red_flags: list[dict]) -> dict:
     """Filters the model's own claims down to what the server can verify,
-    so invented content can never reach the client or move the score,
-    computed once here rather than separately by the response and by
-    scoring, so the two can never disagree.
+    so invented content can never reach the client, and the two booleans
+    that carry the most scoring weight (five_ws addressed,
+    transaction_detail_cited) can never earn credit without a genuine,
+    verified quote behind them. Computed once here rather than separately
+    by the response and by scoring, so the two can never disagree.
 
-    Quotes not found verbatim in the submitted narrative are nulled
-    (unchanged from before this filtering also covered the two list
-    fields below): a wrong quote misrepresents the trainee's own words
-    back to them, worse than a wrong score.
+    Review finding 1: addressed and transaction_detail_cited used to keep
+    the model's own claim even after their paired quote was nulled for
+    failing verification, so a boolean could earn full scoring credit on
+    unverifiable say-so alone. Both are now the model's claim AND the
+    quote's verification result: a quote that fails verification nulls
+    the quote and clears the boolean together, never one without the
+    other.
 
     red_flags_mentioned is intersected with the case's own red flag ids,
     deduplicated, kept in the model's original relative order (dict keys
     preserve first-seen order, this uses that to dedupe without
-    reordering). speculative_phrases keeps only entries that are exact
-    substrings of the narrative, the same rule as the quote checks above:
-    the model could otherwise claim a phrase exists to move
-    speculative_score without it actually being anywhere in what the
-    trainee wrote."""
-    full_text = req.intro + " " + req.investigative_body + " " + req.final_disposition
+    reordering). speculative_phrases keeps only entries _verify_and_locate
+    both verifies and can return the trainee's own exact text for, the
+    same reasoning as the quote fields: the model could otherwise claim a
+    phrase exists, or return its own paraphrase of one, to move
+    speculative_score without ever showing the trainee text that is
+    genuinely theirs."""
+    sections = [req.intro, req.investigative_body, req.final_disposition]
 
     for w in extraction["five_ws"].values():
-        if w["quote"] and w["quote"] not in full_text:
-            w["quote"] = None
+        verified, span = _verify_and_locate(w.get("quote"), sections)
+        w["addressed"] = bool(w["addressed"]) and verified
+        w["quote"] = span if w["addressed"] else None
 
-    tq = extraction.get("transaction_detail_quote")
-    if tq and tq not in full_text:
-        extraction["transaction_detail_quote"] = None
+    verified, span = _verify_and_locate(extraction.get("transaction_detail_quote"), sections)
+    extraction["transaction_detail_cited"] = bool(extraction["transaction_detail_cited"]) and verified
+    extraction["transaction_detail_quote"] = span if extraction["transaction_detail_cited"] else None
 
     valid_red_flag_ids = {rf["id"] for rf in case_red_flags}
     extraction["red_flags_mentioned"] = list(
         dict.fromkeys(rid for rid in extraction["red_flags_mentioned"] if rid in valid_red_flag_ids)
     )
 
-    extraction["speculative_phrases"] = [
-        phrase for phrase in extraction["speculative_phrases"] if phrase in full_text
-    ]
+    verified_phrases = []
+    for phrase in extraction["speculative_phrases"]:
+        verified, span = _verify_and_locate(phrase, sections)
+        if verified and span is not None:
+            verified_phrases.append(span)
+    extraction["speculative_phrases"] = verified_phrases
 
     return extraction
 
