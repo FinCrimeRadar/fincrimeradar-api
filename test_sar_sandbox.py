@@ -6,6 +6,7 @@ Run with pytest, or directly: python test_sar_sandbox.py
 """
 
 import contextlib
+import copy
 import io
 import json
 import shutil
@@ -18,7 +19,10 @@ from pydantic import ValidationError
 import routes_sar_sandbox
 from routes_sar_sandbox import (
     _CASES_CACHE,
+    ExtractionResult,
+    ExtractRequest,
     SarCase,
+    extract,
     get_case,
     get_case_display,
     get_case_full,
@@ -643,6 +647,187 @@ def test_existing_cases_remain_unchanged():
     assert weekend_courier["title"] == "The Weekend Courier"
     assert [rf["id"] for rf in weekend_courier["red_flags"]] == ["rfA", "rfB", "rfC", "rfD", "rfE", "rfF"]
     assert len(weekend_courier["distractor_facts"]) == 2
+
+
+class _FakeExtractRequestContext:
+    """Minimal stand-in for FastAPI's Request, just enough for
+    _extract_rate_limited's headers.get and client.host lookups."""
+
+    headers = {}
+    client = None
+
+
+def test_extract_response_never_leaks_unverified_model_content():
+    # F4: a mocked model result puts a real red flag label and a
+    # distractor string into every free text field it can, none of them
+    # genuine substrings of the submitted narrative. None of that
+    # invented content may reach the client: red_flags_mentioned must
+    # hold only ids the case's own answer key actually has, and the
+    # speculative phrase must be dropped before scoring ever sees it, so
+    # it cannot move speculative_score either.
+    case = get_case_full("sar-003")
+    real_red_flag_label = case["red_flags"][0]["label"]
+    distractor_text = case["distractor_facts"][0]
+    poison = real_red_flag_label + " :: " + distractor_text
+
+    poisoned_result = ExtractionResult(
+        five_ws={
+            w: {"addressed": True, "quote": poison}
+            for w in ["who", "what", "when", "where", "why"]
+        },
+        red_flags_mentioned=["rf1", "rf2", "rf1", "not-a-real-id"],
+        transaction_detail_cited=True,
+        transaction_detail_quote=poison,
+        speculative_phrases=[poison],
+    )
+
+    real_call_once = routes_sar_sandbox._call_extraction_once
+    routes_sar_sandbox._call_extraction_once = lambda case_arg, req_arg: poisoned_result
+    try:
+        req = ExtractRequest(
+            case_id="sar-003",
+            intro="A short generic intro naming no poisoned content.",
+            investigative_body="A short generic investigative body naming no poisoned content.",
+            final_disposition="A short generic disposition naming no poisoned content.",
+        )
+        response = extract(req, _FakeExtractRequestContext())
+        body = response.model_dump()
+    finally:
+        routes_sar_sandbox._call_extraction_once = real_call_once
+
+    dumped = json.dumps(body)
+    assert real_red_flag_label not in dumped
+    assert distractor_text not in dumped
+    assert poison not in dumped
+
+    # deduplicated, order preserved, the invalid id dropped
+    assert body["extraction"]["red_flags_mentioned"] == ["rf1", "rf2"]
+    for entry in body["extraction"]["five_ws"].values():
+        assert entry["quote"] is None
+    assert body["extraction"]["transaction_detail_quote"] is None
+    assert body["extraction"]["speculative_phrases"] == []
+    # zero verified speculative phrases scores as clean language, the
+    # unverified one must not have been counted against the trainee
+    assert body["scoring"]["speculative_score"] == 10
+
+
+def test_score_parity_for_the_23_sep_production_payloads():
+    # F4 score parity: the three 23 Sep production smoke submissions (A,
+    # B1, B2), their actual submitted narratives and their actual recorded
+    # extraction JSON, replayed through score_extraction directly, before
+    # and after adding _project_verified_content's filtering. A change
+    # would only appear if a recorded phrase was not an exact substring of
+    # its own recorded narrative. All three were already clean, so the
+    # expected result is no change at all.
+    red_flags = get_case_full("sar-003")["red_flags"]
+
+    payload_a_narrative = dict(
+        case_id="sar-003",
+        intro=(
+            "This report concerns a customer of the firm. Activity on the account "
+            "appeared unusual and inconsistent with what we would expect."
+        ),
+        investigative_body=(
+            "The customer received several payments that did not seem to fit their "
+            "profile. We were not satisfied with the explanation provided and "
+            "consider the activity suspicious."
+        ),
+        final_disposition="We suspect the funds may be the proceeds of crime.",
+    )
+    payload_a_extraction = {
+        "five_ws": {
+            "who": {"addressed": False, "quote": None},
+            "what": {"addressed": False, "quote": None},
+            "when": {"addressed": False, "quote": None},
+            "where": {"addressed": False, "quote": None},
+            "why": {"addressed": False, "quote": None},
+        },
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": ["We suspect the funds may be the proceeds of crime."],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+
+    payload_b_narrative = dict(
+        case_id="sar-003",
+        intro=(
+            "This SAR concerns Aldercroft Property Services Ltd. The firm received "
+            "a verified law enforcement information request about the director."
+        ),
+        investigative_body=(
+            "Because law enforcement has shown interest in the director, we consider "
+            "the account activity suspicious. The request indicates the director may "
+            "be involved in criminal activity."
+        ),
+        final_disposition="We suspect money laundering on the basis of the law enforcement interest.",
+    )
+    payload_b1_extraction = {
+        "five_ws": {
+            "who": {"addressed": True, "quote": "This SAR concerns Aldercroft Property Services Ltd."},
+            "what": {"addressed": False, "quote": None},
+            "when": {"addressed": False, "quote": None},
+            "where": {"addressed": False, "quote": None},
+            "why": {
+                "addressed": True,
+                "quote": "Because law enforcement has shown interest in the director, we consider the account activity suspicious.",
+            },
+        },
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": [
+            "The request indicates the director may be involved in criminal activity.",
+            "We suspect money laundering on the basis of the law enforcement interest.",
+        ],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+    payload_b2_extraction = {
+        "five_ws": {
+            "who": {"addressed": True, "quote": "This SAR concerns Aldercroft Property Services Ltd."},
+            "what": {"addressed": False, "quote": None},
+            "when": {"addressed": False, "quote": None},
+            "where": {"addressed": False, "quote": None},
+            "why": {
+                "addressed": True,
+                "quote": "The request indicates the director may be involved in criminal activity.",
+            },
+        },
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": [
+            "The request indicates the director may be involved in criminal activity.",
+            "We suspect money laundering on the basis of the law enforcement interest.",
+        ],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+
+    cases = {
+        "A": (payload_a_narrative, payload_a_extraction, 5),
+        "B1": (payload_b_narrative, payload_b1_extraction, 25),
+        "B2": (payload_b_narrative, payload_b2_extraction, 25),
+    }
+
+    for name, (narrative, extraction, recorded_total) in cases.items():
+        before = score_extraction(copy.deepcopy(extraction), red_flags)
+        assert before["total"] == recorded_total, (
+            f"{name}: recorded total does not match a fresh score_extraction "
+            f"call on the same recorded extraction, before any change here"
+        )
+
+        req = ExtractRequest(**narrative)
+        filtered = routes_sar_sandbox._project_verified_content(
+            copy.deepcopy(extraction), req, red_flags
+        )
+        after = score_extraction(filtered, red_flags)
+
+        assert after["total"] == before["total"], (
+            f"{name}: score changed after adding response projection "
+            f"(before={before['total']}, after={after['total']}). All three payloads' "
+            f"phrases were exact substrings of their own recorded narrative, so no "
+            f"change was expected; a change here means one of them was not."
+        )
 
 
 if __name__ == "__main__":

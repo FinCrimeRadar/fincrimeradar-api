@@ -497,6 +497,38 @@ class ExtractionResult(BaseModel):
     sections_present: SectionsPresent = Field(default_factory=SectionsPresent)
 
 
+class ExtractedContent(BaseModel):
+    """What actually reaches the client from a single extraction: the
+    model's own claims, but only the parts the server could verify.
+    red_flags_mentioned and speculative_phrases here are already filtered
+    by _project_verified_content, the same filtered lists score_extraction
+    scores, so the two can never disagree about what was actually
+    credited. Nothing else from the model's raw output is included."""
+
+    five_ws: FiveWs
+    red_flags_mentioned: list[str]
+    speculative_phrases: list[str]
+    transaction_detail_cited: bool
+    transaction_detail_quote: str | None = None
+    sections_present: SectionsPresent
+
+
+class ScoringResult(BaseModel):
+    five_ws_score: int
+    red_flags_score: int
+    transaction_score: int
+    speculative_score: int
+    total: int
+    structural_incomplete: bool
+
+
+class ExtractResponse(BaseModel):
+    """The entire /extract response. Route returns this and nothing else."""
+
+    extraction: ExtractedContent
+    scoring: ScoringResult
+
+
 def _build_user_message(case: dict, req: ExtractRequest) -> str:
     return f"""CASE DOSSIER:
 {json.dumps(case, indent=2)}
@@ -613,19 +645,44 @@ def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
     }
 
 
-def _verify_quotes(extraction: dict, req: ExtractRequest) -> dict:
-    """Null out any quote that isn't an actual substring of the narrative
-    field it claims to come from. Scoring booleans are left untouched,
-    only unverifiable quotes get stripped before this ever reaches the
-    client, since a wrong quote misrepresents the trainee's own words
-    back to them, worse than a wrong score."""
+def _project_verified_content(extraction: dict, req: ExtractRequest, case_red_flags: list[dict]) -> dict:
+    """Filters the model's own claims down to what the server can verify,
+    so invented content can never reach the client or move the score,
+    computed once here rather than separately by the response and by
+    scoring, so the two can never disagree.
+
+    Quotes not found verbatim in the submitted narrative are nulled
+    (unchanged from before this filtering also covered the two list
+    fields below): a wrong quote misrepresents the trainee's own words
+    back to them, worse than a wrong score.
+
+    red_flags_mentioned is intersected with the case's own red flag ids,
+    deduplicated, kept in the model's original relative order (dict keys
+    preserve first-seen order, this uses that to dedupe without
+    reordering). speculative_phrases keeps only entries that are exact
+    substrings of the narrative, the same rule as the quote checks above:
+    the model could otherwise claim a phrase exists to move
+    speculative_score without it actually being anywhere in what the
+    trainee wrote."""
     full_text = req.intro + " " + req.investigative_body + " " + req.final_disposition
+
     for w in extraction["five_ws"].values():
         if w["quote"] and w["quote"] not in full_text:
             w["quote"] = None
+
     tq = extraction.get("transaction_detail_quote")
     if tq and tq not in full_text:
         extraction["transaction_detail_quote"] = None
+
+    valid_red_flag_ids = {rf["id"] for rf in case_red_flags}
+    extraction["red_flags_mentioned"] = list(
+        dict.fromkeys(rid for rid in extraction["red_flags_mentioned"] if rid in valid_red_flag_ids)
+    )
+
+    extraction["speculative_phrases"] = [
+        phrase for phrase in extraction["speculative_phrases"] if phrase in full_text
+    ]
+
     return extraction
 
 
@@ -753,8 +810,8 @@ def get_case(case_id: str):
     return JSONResponse(content=display)
 
 
-@router.post("/api/sar-sandbox/extract")
-def extract(req: ExtractRequest, request: Request):
+@router.post("/api/sar-sandbox/extract", response_model=ExtractResponse)
+def extract(req: ExtractRequest, request: Request) -> ExtractResponse:
     if _extract_rate_limited(request):
         raise HTTPException(
             status_code=429,
@@ -777,7 +834,10 @@ def extract(req: ExtractRequest, request: Request):
         "final_disposition": bool(req.final_disposition.strip()),
     }
 
-    extraction_dict = _verify_quotes(extraction_dict, req)
+    extraction_dict = _project_verified_content(extraction_dict, req, case["red_flags"])
     scoring = score_extraction(extraction_dict, case["red_flags"])
 
-    return JSONResponse(content={"extraction": extraction_dict, "scoring": scoring})
+    return ExtractResponse(
+        extraction=ExtractedContent(**extraction_dict),
+        scoring=ScoringResult(**scoring),
+    )
