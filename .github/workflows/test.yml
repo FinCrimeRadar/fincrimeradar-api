@@ -19,3 +19,10 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: python test_sar_sandbox.py
+      # test_sar_sandbox.py only imports routes_sar_sandbox in isolation.
+      # The actual invariant this gate exists for is that a corrupt case
+      # file can no longer crash main.py's own import chain (main.py
+      # imports routes_sar_sandbox at its own top level), so import main
+      # directly too. No secret needed: every import in this chain reads
+      # its env var lazily, confirmed locally with none set.
+      - run: python -c "import main"
