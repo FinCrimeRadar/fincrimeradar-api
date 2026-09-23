@@ -210,7 +210,11 @@ def _tmp_case_dir(extra_files):
         for path in real_case_dir.glob(routes_sar_sandbox.CASE_GLOB):
             shutil.copy(path, Path(tmp_dir) / path.name)
         for filename, content in extra_files.items():
-            (Path(tmp_dir) / filename).write_text(content, encoding="utf-8")
+            target = Path(tmp_dir) / filename
+            if isinstance(content, bytes):
+                target.write_bytes(content)
+            else:
+                target.write_text(content, encoding="utf-8")
 
         routes_sar_sandbox.CASE_DIR = Path(tmp_dir)
         log = io.StringIO()
@@ -244,8 +248,24 @@ def test_case_missing_onward_movement_is_excluded_and_logged():
 def test_case_with_malformed_json_is_excluded_and_logged():
     with _tmp_case_dir({"case_sar_zzz_malformed.json": "{not valid json"}) as (cases, invalid_count, log):
         assert invalid_count == 1
-        assert "invalid JSON" in log
+        assert "could not read or parse file" in log
         assert "case_sar_zzz_malformed.json" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+        assert get_case_display("sar-003") is not None
+
+
+def test_case_with_non_utf8_bytes_is_excluded_and_logged():
+    # Regression test for a /code-review finding on this same branch:
+    # open()'s utf-8 decoding happens lazily as json.load() reads the file,
+    # so a stray non-utf-8 byte raises UnicodeDecodeError, not
+    # json.JSONDecodeError. Catching only JSONDecodeError left this path
+    # able to crash the whole app on import, exactly what this PR exists
+    # to close.
+    with _tmp_case_dir({"case_sar_zzz_badbytes.json": b"\xff\xfe not valid utf-8"}) as (cases, invalid_count, log):
+        assert invalid_count == 1
+        assert "could not read or parse file" in log
+        assert "UnicodeDecodeError" in log
+        assert "case_sar_zzz_badbytes.json" in log
         assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
         assert get_case_display("sar-003") is not None
 

@@ -69,9 +69,12 @@ _REQUIRED_CASE_SCHEMA = {
 
 def _validate_case(case, path: Path) -> list[str]:
     """Structural validation only, run once per case file at load time.
-    Returns an empty list for a valid case. Never includes case content in
-    an error string, only key names, list indices and type names, since
-    these errors are printed to the server log."""
+    Returns an empty list for a valid case. An error string may include the
+    case_id itself, a synthetic training-case slug such as "sar-003", not
+    sensitive data, since the caller logs it to identify which file failed.
+    It never includes actual case content: no subject, transaction,
+    red_flags or distractor_facts values, only key names, list indices and
+    type names."""
     if not isinstance(case, dict):
         return [f"{path.name}: case is not a JSON object"]
 
@@ -132,11 +135,17 @@ def _load_cases():
         try:
             with open(path, "r", encoding="utf-8") as f:
                 case = json.load(f)
-        except json.JSONDecodeError as exc:
+        except (OSError, ValueError) as exc:
+            # OSError covers a read failure other than the file simply not
+            # existing (already handled by the glob above), for example a
+            # permissions error. ValueError covers both json.JSONDecodeError
+            # and UnicodeDecodeError, since open()'s utf-8 decoding happens
+            # lazily as json.load() reads the file, not at open() itself, a
+            # stray non-utf-8 byte raises here, not a plain JSONDecodeError.
             invalid_count += 1
             print(
                 f"SAR sandbox case load error: file={path.name} case_id=unknown "
-                f"errors=['invalid JSON: {exc}']"
+                f"errors=['could not read or parse file: {type(exc).__name__}: {exc}']"
             )
             continue
 
