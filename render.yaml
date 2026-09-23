@@ -30,6 +30,4 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     healthCheckPath: /api/health
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.14
+    # Runtime is pinned by .python-version at the repo root. A PYTHON_VERSION env var here would override it and must be fully qualified (Render requires an exact patch version for that var, unlike .python-version).
