@@ -135,13 +135,20 @@ def _load_cases():
         try:
             with open(path, "r", encoding="utf-8") as f:
                 case = json.load(f)
-        except (OSError, ValueError) as exc:
-            # OSError covers a read failure other than the file simply not
-            # existing (already handled by the glob above), for example a
-            # permissions error. ValueError covers both json.JSONDecodeError
-            # and UnicodeDecodeError, since open()'s utf-8 decoding happens
-            # lazily as json.load() reads the file, not at open() itself, a
-            # stray non-utf-8 byte raises here, not a plain JSONDecodeError.
+        except Exception as exc:
+            # Deliberately broad, scoped to only this read and parse, not
+            # the rest of the loop body. Two rounds of code review each
+            # found a different concrete exception type that a narrower
+            # catch missed here: json.JSONDecodeError alone missed
+            # UnicodeDecodeError (open()'s utf-8 decoding happens lazily as
+            # json.load() reads the file, not at open() itself), and
+            # (OSError, ValueError) still missed RecursionError, which
+            # CPython's json decoder raises on deeply nested input and
+            # which is neither. The one property that actually matters,
+            # "no single case file can crash this module's import, which
+            # main.py imports at its own top level", only holds if this
+            # catches every exception a corrupt file could raise here, not
+            # an enumerated subset of the ones found so far.
             invalid_count += 1
             print(
                 f"SAR sandbox case load error: file={path.name} case_id=unknown "
