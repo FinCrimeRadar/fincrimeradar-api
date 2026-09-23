@@ -73,23 +73,24 @@ def test_case_detail_contains_only_whitelisted_fields():
         assert set(display.keys()) == EXPECTED_DISPLAY_FIELDS
 
 
-def test_nested_case_fields_are_excluded_by_default():
-    case = get_case_full("sar-003")
+def test_get_case_full_returns_isolated_copy():
+    # get_case_full builds its dict fresh from the cached SarCase model on
+    # every call (case.model_dump(by_alias=True)), so mutating the returned
+    # dict must never reach the cache. A fresh call, and get_display_json,
+    # must both come back unchanged.
     sentinel = "server-side-answer-key-probe"
-    probe_locations = [
-        case["subject"],
-        case["activity_window"],
-        case["transactions"][0],
-        case["onward_movement"],
-    ]
+    case = get_case_full("sar-003")
+    case["subject"]["entity_name"] = sentinel
+    case["activity_window"]["start"] = sentinel
+    case["transactions"][0]["description"] = sentinel
+    case["onward_movement"]["destination_note"] = sentinel
+    case["red_flags"][0]["label"] = sentinel
 
-    try:
-        for record in probe_locations:
-            record["answer_key_probe"] = sentinel
-        assert sentinel not in json.dumps(get_display_json("sar-003"))
-    finally:
-        for record in probe_locations:
-            record.pop("answer_key_probe", None)
+    fresh_full = get_case_full("sar-003")
+    fresh_display = get_display_json("sar-003")
+
+    assert sentinel not in json.dumps(fresh_full)
+    assert sentinel not in json.dumps(fresh_display)
 
 
 def test_answer_key_and_distractors_do_not_leak_to_client():
