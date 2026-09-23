@@ -200,7 +200,8 @@ def _tmp_case_dir(extra_files):
     given extra files, points routes_sar_sandbox at the tmp dir for the
     duration, runs _load_cases against it, then restores the real CASE_DIR
     and the real _CASES_CACHE/_INVALID_CASES. Never edits a real case file.
-    Yields (cases, invalid_count, captured_log_text)."""
+    Yields (cases, invalid_count, captured_log_text).
+    Not safe under a parallel test runner: mutates module globals with no lock."""
     real_case_dir = routes_sar_sandbox.CASE_DIR
     real_cases_cache = routes_sar_sandbox._CASES_CACHE
     real_invalid_cases = routes_sar_sandbox._INVALID_CASES
@@ -282,6 +283,26 @@ def test_case_with_deeply_nested_json_is_excluded_and_logged():
         assert "could not read or parse file" in log
         assert "RecursionError" in log
         assert "case_sar_zzz_deepnest.json" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+        assert get_case_display("sar-003") is not None
+
+
+def test_case_with_non_dict_top_level_list_is_excluded_and_logged():
+    # _validate_case must return an error, never raise, for any valid
+    # json.load result whose top level is not an object.
+    with _tmp_case_dir({"case_sar_zzz_toplevel_list.json": json.dumps([1, 2, 3])}) as (cases, invalid_count, log):
+        assert invalid_count == 1
+        assert "top level must be an object" in log
+        assert "case_sar_zzz_toplevel_list.json" in log
+        assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
+        assert get_case_display("sar-003") is not None
+
+
+def test_case_with_non_dict_top_level_number_is_excluded_and_logged():
+    with _tmp_case_dir({"case_sar_zzz_toplevel_number.json": "42"}) as (cases, invalid_count, log):
+        assert invalid_count == 1
+        assert "top level must be an object" in log
+        assert "case_sar_zzz_toplevel_number.json" in log
         assert {"sar-phase0-001", "sar-002", "sar-003"}.issubset(cases)
         assert get_case_display("sar-003") is not None
 

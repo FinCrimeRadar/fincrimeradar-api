@@ -76,7 +76,7 @@ def _validate_case(case, path: Path) -> list[str]:
     red_flags or distractor_facts values, only key names, list indices and
     type names."""
     if not isinstance(case, dict):
-        return [f"{path.name}: case is not a JSON object"]
+        return [f"{path.name}: top level must be an object"]
 
     errors = []
     for key, expected_type in _REQUIRED_CASE_SCHEMA.items():
