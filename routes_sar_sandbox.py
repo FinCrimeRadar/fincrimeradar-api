@@ -25,7 +25,9 @@ excluded until someone deliberately adds it to this list.
 import json
 import re
 import time
+import unicodedata
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -497,6 +499,49 @@ class ExtractionResult(BaseModel):
     sections_present: SectionsPresent = Field(default_factory=SectionsPresent)
 
 
+class ExtractedContent(BaseModel):
+    """What actually reaches the client from a single extraction: the
+    model's own claims, but only the parts the server could verify.
+    Nothing else from the model's raw output is included.
+
+    "Verified" means different things for different fields here.
+    five_ws, transaction_detail and speculative_phrases are checked
+    against the submitted narrative text itself, by _verify_and_locate:
+    a quote or phrase that is not genuinely there is dropped.
+    red_flags_mentioned is filtered only against the case's own red flag
+    id list, membership, not narrative-text verification: crediting a
+    red flag id is still the model's own judgement call about what the
+    narrative shows, not something confirmed against the trainee's own
+    words the way the other fields are. That gap is tracked for a
+    follow-up PR (#5), not addressed here. Whichever list a field draws
+    from, the same filtered value is what score_extraction scores, so
+    the response and the score can never disagree about what was
+    actually credited."""
+
+    five_ws: FiveWs
+    red_flags_mentioned: list[str]
+    speculative_phrases: list[str]
+    transaction_detail_cited: bool
+    transaction_detail_quote: str | None = None
+    sections_present: SectionsPresent
+
+
+class ScoringResult(BaseModel):
+    five_ws_score: int
+    red_flags_score: int
+    transaction_score: int
+    speculative_score: int
+    total: int
+    structural_incomplete: bool
+
+
+class ExtractResponse(BaseModel):
+    """The entire /extract response. Route returns this and nothing else."""
+
+    extraction: ExtractedContent
+    scoring: ScoringResult
+
+
 def _build_user_message(case: dict, req: ExtractRequest) -> str:
     return f"""CASE DOSSIER:
 {json.dumps(case, indent=2)}
@@ -569,26 +614,59 @@ def _strip_code_fence(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
+def score_extraction(extraction: "ProjectedExtraction", case_red_flags: list[dict]) -> dict:
     """Pure scoring function, no API call, unit testable on its own.
 
-    extraction is the extraction JSON (matching ExtractionResult's shape).
-    case_red_flags is the case's own red_flags list, the answer key, never
-    sent to the browser. Only this function ever sees the two side by side.
+    extraction must be a ProjectedExtraction, produced only by
+    _project_verified_content: this function trusts every field it reads
+    and applies no verification of its own. case_red_flags is the case's
+    own red_flags list, the answer key, never sent to the browser. Only
+    this function ever sees the two side by side.
+
+    speculative_score is scored from extraction.scoring_speculative, the
+    full normalised/tokenised-verified list _project_verified_content
+    computes, never the narrower display_speculative list that also has
+    to pass the separate exact-text-recoverable check before it can be
+    shown to the client: a phrase in a curly-quote or case variant of the
+    trainee's own words is still speculative language the trainee used,
+    and the penalty for it must not become avoidable just because the
+    server cannot safely echo it back verbatim.
+
+    Deliberately no fallback for a caller that skips _project_verified_content:
+    that caller has not had its five_ws/transaction booleans verified
+    either, so silently scoring it anyway would create a second,
+    unverified path to a score, which is exactly what
+    _project_verified_content exists to prevent. Raises TypeError for
+    anything other than a genuine ProjectedExtraction, so that mistake
+    fails loudly instead of quietly scoring unverified model output.
     """
+    if not isinstance(extraction, ProjectedExtraction):
+        raise TypeError(
+            "score_extraction requires a ProjectedExtraction, produced only by "
+            "_project_verified_content: pass extraction through that function "
+            "first, scoring raw, unverified model output is not supported."
+        )
+
     valid_red_flag_ids = {rf["id"] for rf in case_red_flags}
 
-    five_ws = extraction["five_ws"]
-    five_ws_score = min(sum(10 for w in five_ws.values() if w["addressed"]), 50)
+    five_ws = extraction.five_ws
+    five_ws_score = min(
+        sum(
+            10
+            for w in (five_ws.who, five_ws.what, five_ws.when, five_ws.where, five_ws.why)
+            if w.addressed
+        ),
+        50,
+    )
 
     # Deduplicated: "5 points per id" means per red flag identified, not per
     # mention, a repeated id in red_flags_mentioned must not double-count.
-    matched_red_flags = set(extraction["red_flags_mentioned"]) & valid_red_flag_ids
+    matched_red_flags = set(extraction.red_flags_mentioned) & valid_red_flag_ids
     red_flags_score = min(5 * len(matched_red_flags), 30)
 
-    transaction_score = 10 if extraction["transaction_detail_cited"] else 0
+    transaction_score = 10 if extraction.transaction_detail_cited else 0
 
-    spec_count = len(extraction["speculative_phrases"])
+    spec_count = len(extraction.scoring_speculative)
     if spec_count == 0:
         speculative_score = 10
     elif spec_count <= 2:
@@ -598,8 +676,10 @@ def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
 
     total = five_ws_score + red_flags_score + transaction_score + speculative_score
 
-    sections_present = extraction["sections_present"]
-    structural_incomplete = any(not present for present in sections_present.values())
+    sections_present = extraction.sections_present
+    structural_incomplete = not (
+        sections_present.intro and sections_present.investigative_body and sections_present.final_disposition
+    )
     if structural_incomplete:
         total = min(total, 40)
 
@@ -613,20 +693,280 @@ def score_extraction(extraction: dict, case_red_flags: list[dict]) -> dict:
     }
 
 
-def _verify_quotes(extraction: dict, req: ExtractRequest) -> dict:
-    """Null out any quote that isn't an actual substring of the narrative
-    field it claims to come from. Scoring booleans are left untouched,
-    only unverifiable quotes get stripped before this ever reaches the
-    client, since a wrong quote misrepresents the trainee's own words
-    back to them, worse than a wrong score."""
-    full_text = req.intro + " " + req.investigative_body + " " + req.final_disposition
-    for w in extraction["five_ws"].values():
-        if w["quote"] and w["quote"] not in full_text:
-            w["quote"] = None
-    tq = extraction.get("transaction_detail_quote")
-    if tq and tq not in full_text:
-        extraction["transaction_detail_quote"] = None
-    return extraction
+_DASH_CHARS = "‐‑‒–—−"  # hyphen, non-breaking hyphen, figure dash, en dash, em dash, minus sign
+_CURLY_QUOTE_MAP = {
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": '"', "”": '"', "„": '"', "‟": '"',
+}
+def _normalise_for_match(text: str) -> str:
+    """Normalises a text span so the same words with only cosmetic
+    differences (curly vs straight quotes, en or em dash vs hyphen, extra
+    or collapsed whitespace, case) compare equal. Used only to decide
+    whether a candidate quote or phrase genuinely appears in the
+    narrative, never returned to the client: see _verify_and_locate for
+    what text actually reaches the trainee."""
+    text = unicodedata.normalize("NFKC", text)
+    for dash in _DASH_CHARS:
+        text = text.replace(dash, "-")
+    for curly, straight in _CURLY_QUOTE_MAP.items():
+        text = text.replace(curly, straight)
+    return " ".join(text.split()).strip().casefold()
+
+
+# Tokenised, not substring, matching (review finding 2 continued): plain
+# character-substring containment on normalised text let "he sent 47"
+# wrongly verify inside "she sent 47000 yesterday", since "he sent 47" is
+# a literal character substring of "she sent 47000" ("she" contains "he",
+# "47000" starts with "47"). Splitting into number and word tokens and
+# requiring the candidate's token sequence to occur contiguously in the
+# section's own token sequence closes that: tokens compare whole, never
+# as prefixes or fragments of a longer one.
+#
+# Number tokens keep internal grouping/decimal separators ("47,250",
+# "47.5") as one token. Word tokens keep an internal apostrophe
+# ("don't") as one token. A currency symbol is its own token ("£47,250"
+# tokenises to ["£", "47,250"]), review finding 3: without it, the symbol
+# was just another separator character, dropped rather than compared, so
+# a candidate and a section that differed only in which currency (or no
+# currency) prefixed the same number still matched. Everything else
+# (spaces, punctuation, the hyphens and quotes _normalise_for_match
+# already folded) is a separator, not part of any token.
+_NUMBER_TOKEN = r"\d+(?:[.,]\d+)*"
+_WORD_TOKEN = r"[a-z]+(?:'[a-z]+)*"
+_CURRENCY_CHARS = "£$€¥"
+_CURRENCY_TOKEN = f"[{_CURRENCY_CHARS}]"
+_TOKEN_RE = re.compile(f"{_NUMBER_TOKEN}|{_WORD_TOKEN}|{_CURRENCY_TOKEN}")
+
+_MIN_MATCH_TOKENS = 2
+
+# NLTK's standard English stopword list (function words only: articles,
+# pronouns, prepositions, conjunctions, auxiliary verbs and their
+# contractions). Hardcoded rather than adding nltk as a dependency for
+# one fixed list. Used only for rule (b) below, never to drop tokens from
+# the sequence itself: a stopword still has to line up positionally like
+# any other token for a contiguous match.
+_STOPWORDS = frozenset("""
+i me my myself we our ours ourselves you you're you've you'll you'd your
+yours yourself yourselves he him his himself she she's her hers herself
+it it's its itself they them their theirs themselves what which who whom
+this that that'll these those am is are was were be been being have has
+had having do does did doing a an the and but if or because as until
+while of at by for with about against between into through during before
+after above below to from up down in out on off over under again
+further then once here there when where why how all any both each few
+more most other some such no nor not only own same so than too very s t
+can will just don don't should should've now d ll m o re ve y ain aren
+aren't couldn couldn't didn didn't doesn doesn't hadn hadn't hasn hasn't
+haven haven't isn isn't ma mightn mightn't mustn mustn't needn needn't
+shan shan't shouldn shouldn't wasn wasn't weren weren't won won't wouldn
+wouldn't
+""".split())
+
+
+def _tokenize(text: str) -> list[str]:
+    """Number, word and currency-symbol tokens only, from the normalised
+    form of text, in order. See _TOKEN_RE for exactly what counts as a
+    token."""
+    return _TOKEN_RE.findall(_normalise_for_match(text))
+
+
+def _is_numeric_token(token: str) -> bool:
+    return token[:1].isdigit()
+
+
+def _is_currency_token(token: str) -> bool:
+    return token in _CURRENCY_CHARS
+
+
+def _contains_contiguous(needle: list[str], haystack: list[str]) -> bool:
+    n = len(needle)
+    if n == 0 or n > len(haystack):
+        return False
+    return any(haystack[i : i + n] == needle for i in range(len(haystack) - n + 1))
+
+
+def _unmatched_alnum_remains(text: str) -> bool:
+    """True if, after every span _TOKEN_RE matched is removed from text's
+    normalised form, a Unicode letter or digit is still left over.
+
+    Review finding 2: tokenising is English-only by policy (_WORD_TOKEN
+    is [a-z] only, after casefold), so a script _TOKEN_RE cannot match at
+    all, Han characters, an accented Latin letter NFKC does not fold away
+    (e.g. "Ø"), is simply skipped as a separator, the same as whitespace
+    or punctuation. Left unchecked, "张三 sent funds" would tokenise to
+    exactly ["sent", "funds"] and wrongly verify against a section that
+    only ever said "sent funds", the unmatched name silently discarded
+    rather than treated as content that failed to match. This check fails
+    the candidate closed instead: any leftover letter or digit anywhere
+    in it means the tokeniser could not account for the whole candidate,
+    so it must not verify.
+    """
+    residual = _TOKEN_RE.sub("", _normalise_for_match(text))
+    return any(ch.isalnum() for ch in residual)
+
+
+def _verify_and_locate(candidate: str | None, sections: list[str]) -> tuple[bool, str | None]:
+    """Verifies a candidate quote or phrase against the submitted
+    narrative and decides what, if anything, can be shown back to the
+    trainee for it.
+
+    A candidate verifies only when all of:
+    (a) it tokenises (see _tokenize) to 2 or more tokens;
+    (b) no character of it is left over unmatched by any token once
+        tokenising is done (see _unmatched_alnum_remains): a script or
+        letter _TOKEN_RE cannot recognise must fail the candidate closed,
+        not be silently dropped like punctuation;
+    (c) at least one of those tokens is numeric or is a word token not in
+        the _STOPWORDS list. A currency symbol token is not substantive
+        on its own for this rule, only the amount it prefixes is: "£ of"
+        must not verify on the strength of "£" alone. A candidate made
+        entirely of stopword and/or currency-symbol tokens ("of the")
+        never verifies, even if that exact phrase appears in the
+        narrative: it is not meaningful evidence of anything;
+    (d) its token sequence occurs contiguously in ONE section's own
+        token sequence. There is no cross-section join: a candidate
+        assembled from the tail of one section and the head of the next
+        must not verify just because the two read naturally end to end.
+
+    Returns (verified, original_span). original_span carries the
+    trainee's own characters, unchanged, and is populated only when the
+    candidate string itself, not a normalised rewrite of it, is an exact
+    substring of the same section the token match was found in. When a
+    candidate verifies only through normalisation or tokenisation, its
+    exact original span in the narrative is not reconstructed here, so
+    original_span is None: callers that track a boolean and a quote
+    separately (five_ws, transaction detail) keep the boolean true and
+    drop only the display text; callers with no separate boolean
+    (speculative_phrases) drop the candidate outright, since there is no
+    other field left to carry the credit through.
+    """
+    if not candidate:
+        return False, None
+
+    candidate_tokens = _tokenize(candidate)
+    if len(candidate_tokens) < _MIN_MATCH_TOKENS:
+        return False, None
+    if _unmatched_alnum_remains(candidate):
+        return False, None
+    if not any(
+        _is_numeric_token(t) or (t not in _STOPWORDS and not _is_currency_token(t))
+        for t in candidate_tokens
+    ):
+        return False, None
+
+    for section in sections:
+        if _contains_contiguous(candidate_tokens, _tokenize(section)):
+            return True, candidate if candidate in section else None
+
+    return False, None
+
+
+@dataclass(frozen=True)
+class ProjectedExtraction:
+    """The only shape _project_verified_content ever returns, and the only
+    shape score_extraction ever accepts: the response and scoring are both
+    built from this one immutable object, so they can never disagree about
+    what was actually verified.
+
+    red_flags_mentioned is intersected with the case's own red flag ids
+    only. Unlike five_ws, transaction_detail and speculative_phrases, it
+    is not checked against the narrative text: crediting a red flag id is
+    still the model's own judgement call, not something
+    _verify_and_locate confirms the trainee actually wrote. That is a
+    known gap, tracked for a follow-up PR, not addressed here.
+
+    display_speculative and scoring_speculative differ because crediting
+    and displaying a speculative phrase need different rules: see
+    _project_verified_content for why."""
+
+    five_ws: FiveWs
+    transaction_detail_cited: bool
+    transaction_detail_quote: str | None
+    red_flags_mentioned: list[str]
+    display_speculative: list[str]
+    scoring_speculative: list[str]
+    sections_present: SectionsPresent
+
+
+def _project_verified_content(
+    extraction: dict, req: ExtractRequest, case_red_flags: list[dict]
+) -> ProjectedExtraction:
+    """Filters the model's own claims down to what the server can verify
+    against the narrative text itself (five_ws, transaction_detail and
+    speculative_phrases; see ProjectedExtraction's docstring for why
+    red_flags_mentioned is filtered differently), so fabricated quotes and
+    phrases can never reach the client, and the two booleans that carry
+    the most scoring weight (five_ws addressed, transaction_detail_cited)
+    can never earn credit without a genuine, verified quote behind them.
+    Computed once here rather than separately by the response and by
+    scoring, so the two can never disagree.
+
+    Review finding 1: addressed and transaction_detail_cited used to keep
+    the model's own claim even after their paired quote was nulled for
+    failing verification, so a boolean could earn full scoring credit on
+    unverifiable say-so alone. Both are now the model's claim AND the
+    quote's verification result: a quote that fails verification nulls
+    the quote and clears the boolean together, never one without the
+    other.
+
+    red_flags_mentioned is intersected with the case's own red flag ids,
+    deduplicated, kept in the model's original relative order (dict keys
+    preserve first-seen order, this uses that to dedupe without
+    reordering). See ProjectedExtraction's docstring: this is still only
+    an id-membership check, not narrative-text verification.
+
+    speculative_phrases splits into two outputs, since crediting and
+    displaying it turned out to need different rules. A fabricated phrase,
+    one that fails _verify_and_locate entirely, ends up in neither: the
+    model could otherwise claim a phrase exists, or invent one outright,
+    to move speculative_score without it ever having appeared in what the
+    trainee wrote. A phrase that verifies, exactly or only through
+    normalisation or tokenisation, always earns its penalty, in
+    scoring_speculative, which score_extraction reads: a normalisation-
+    only match (curly quotes, dash style, case) is still the trainee's own
+    speculative words, and the penalty for using them must not become
+    avoidable merely because the server cannot safely echo the phrase back
+    character for character. Only a phrase whose exact text is itself a
+    substring of the narrative is also kept in display_speculative, the
+    field actually returned to the client: display always shows the
+    trainee's own exact text, never a normalised rewrite of it, so a
+    phrase that verifies only through normalisation is scored but not
+    shown."""
+    sections = [req.intro, req.investigative_body, req.final_disposition]
+
+    five_ws = {}
+    for w, entry in extraction["five_ws"].items():
+        verified, span = _verify_and_locate(entry.get("quote"), sections)
+        addressed = bool(entry["addressed"]) and verified
+        five_ws[w] = FiveWEntry(addressed=addressed, quote=span if addressed else None)
+
+    verified, span = _verify_and_locate(extraction.get("transaction_detail_quote"), sections)
+    transaction_detail_cited = bool(extraction["transaction_detail_cited"]) and verified
+    transaction_detail_quote = span if transaction_detail_cited else None
+
+    valid_red_flag_ids = {rf["id"] for rf in case_red_flags}
+    red_flags_mentioned = list(
+        dict.fromkeys(rid for rid in extraction["red_flags_mentioned"] if rid in valid_red_flag_ids)
+    )
+
+    scoring_speculative = []
+    display_speculative = []
+    for phrase in extraction["speculative_phrases"]:
+        verified, span = _verify_and_locate(phrase, sections)
+        if verified:
+            scoring_speculative.append(phrase)
+            if span is not None:
+                display_speculative.append(span)
+
+    return ProjectedExtraction(
+        five_ws=FiveWs(**five_ws),
+        transaction_detail_cited=transaction_detail_cited,
+        transaction_detail_quote=transaction_detail_quote,
+        red_flags_mentioned=red_flags_mentioned,
+        display_speculative=display_speculative,
+        scoring_speculative=scoring_speculative,
+        sections_present=SectionsPresent(**extraction["sections_present"]),
+    )
 
 
 def _call_extraction_once(case: dict, req: ExtractRequest) -> ExtractionResult:
@@ -667,72 +1007,132 @@ def _call_extraction_once(case: dict, req: ExtractRequest) -> ExtractionResult:
         )
 
 
-def _extract_with_consistency(case: dict, req: ExtractRequest) -> dict:
-    """Self-consistency voting over the scoring-relevant fields. Two calls
-    in the common case, a tie-breaking third only when the first two
-    disagree on anything that actually feeds score_extraction. Quotes are
-    never part of the agreement check, they're display text, not a
-    scoring input, and are expected to vary in exact span even when the
-    underlying judgement is identical."""
-    run1 = _call_extraction_once(case, req).model_dump()
-    run2 = _call_extraction_once(case, req).model_dump()
+def _extract_with_consistency(
+    case: dict, req: ExtractRequest, case_red_flags: list[dict]
+) -> "ProjectedExtraction":
+    """Self-consistency voting over verified, not raw, extraction.
 
-    def scoring_fields(r):
+    Review finding 1: voting used to compare the model's raw claims
+    before anything was checked against the narrative, so two runs could
+    "agree" on the very same fabricated quote and that agreement was
+    treated as if it meant something. Every run is projected through
+    _project_verified_content first; agreement and the majority vote both
+    operate only on ProjectedExtraction values, never on a raw model
+    dict. _project_verified_content remains the only verifier, here or
+    anywhere else in this module: this function only combines outputs it
+    has already verified.
+
+    Two calls in the common case, a tie-breaking third only when the
+    first two projected runs disagree on anything that actually feeds
+    score_extraction. Quotes are never part of the agreement check,
+    they're display text, not a scoring input, and are expected to vary
+    in exact span even when the underlying judgement is identical.
+    Speculative-phrase agreement is by identity, each phrase's own
+    normalised token sequence from _tokenize, not by count: two runs
+    that agree on how many speculative phrases exist but disagree on
+    what they actually are must not be treated as having agreed at all.
+    """
+    sections = [req.intro, req.investigative_body, req.final_disposition]
+
+    # Computed from the submitted fields, not the model's judgement:
+    # whether a section was filled in is a fact about the request, not
+    # something that needs an LLM to assess, and leaving it to the
+    # model's judgement risked exactly the kind of drift a scoring input
+    # can't tolerate. Identical for every run by construction, computed
+    # once here rather than per run.
+    sections_present = {
+        "intro": bool(req.intro.strip()),
+        "investigative_body": bool(req.investigative_body.strip()),
+        "final_disposition": bool(req.final_disposition.strip()),
+    }
+
+    def run_and_project() -> ProjectedExtraction:
+        raw = _call_extraction_once(case, req).model_dump()
+        raw["sections_present"] = sections_present
+        return _project_verified_content(raw, req, case_red_flags)
+
+    def agreement_fields(p: ProjectedExtraction):
         return (
-            tuple(r["five_ws"][w]["addressed"] for w in ["who", "what", "when", "where", "why"]),
-            frozenset(r["red_flags_mentioned"]),
-            r["transaction_detail_cited"],
-            len(r["speculative_phrases"]),
+            tuple(getattr(p.five_ws, w).addressed for w in ("who", "what", "when", "where", "why")),
+            p.transaction_detail_cited,
+            frozenset(p.red_flags_mentioned),
+            frozenset(tuple(_tokenize(phrase)) for phrase in p.scoring_speculative),
         )
 
-    if scoring_fields(run1) == scoring_fields(run2):
+    run1 = run_and_project()
+    run2 = run_and_project()
+
+    if agreement_fields(run1) == agreement_fields(run2):
         return run1
 
-    run3 = _call_extraction_once(case, req).model_dump()
+    run3 = run_and_project()
     runs = [run1, run2, run3]
 
-    def majority_bool(values):
+    def majority_bool(values: list[bool]) -> bool:
         return sum(values) >= 2
 
-    merged = {"five_ws": {}}
-    for w in ["who", "what", "when", "where", "why"]:
-        addressed = majority_bool([r["five_ws"][w]["addressed"] for r in runs])
-        quote = None
-        if addressed:
-            quote = next(
-                (r["five_ws"][w]["quote"] for r in runs if r["five_ws"][w]["addressed"] and r["five_ws"][w]["quote"]),
-                None,
-            )
-        merged["five_ws"][w] = {"addressed": addressed, "quote": quote}
+    merged_five_ws = {}
+    for w in ("who", "what", "when", "where", "why"):
+        entries = [getattr(r.five_ws, w) for r in runs]
+        addressed = majority_bool([e.addressed for e in entries])
+        quote = next((e.quote for e in entries if e.addressed and e.quote), None) if addressed else None
+        merged_five_ws[w] = FiveWEntry(addressed=addressed, quote=quote)
 
-    all_ids = set().union(*(set(r["red_flags_mentioned"]) for r in runs))
-    merged["red_flags_mentioned"] = [
-        rid for rid in all_ids if sum(rid in r["red_flags_mentioned"] for r in runs) >= 2
-    ]
-
-    merged["transaction_detail_cited"] = majority_bool([r["transaction_detail_cited"] for r in runs])
-    merged["transaction_detail_quote"] = (
+    transaction_detail_cited = majority_bool([r.transaction_detail_cited for r in runs])
+    transaction_detail_quote = (
         next(
-            (r["transaction_detail_quote"] for r in runs if r["transaction_detail_cited"] and r["transaction_detail_quote"]),
+            (
+                r.transaction_detail_quote
+                for r in runs
+                if r.transaction_detail_cited and r.transaction_detail_quote
+            ),
             None,
         )
-        if merged["transaction_detail_cited"]
+        if transaction_detail_cited
         else None
     )
 
-    counts = sorted(len(r["speculative_phrases"]) for r in runs)
-    median_count = counts[1]
-    chosen = next(
-        (r for r in sorted(runs, key=lambda r: len(r["speculative_phrases"])) if len(r["speculative_phrases"]) == median_count),
-        runs[0],
+    all_ids = set().union(*(set(r.red_flags_mentioned) for r in runs))
+    red_flags_mentioned = [rid for rid in all_ids if sum(rid in r.red_flags_mentioned for r in runs) >= 2]
+
+    # Group each run's verified speculative phrases by identity (each
+    # phrase's own normalised token sequence), so a curly-quote or case
+    # variant of the same phrase across two runs counts as one phrase
+    # agreeing twice, not two different phrases each agreeing once. A
+    # run that lists the same identity more than once still only counts
+    # as one agreeing run, "2 or more runs" means distinct runs, not
+    # occurrences.
+    variants_by_identity: dict[tuple, list[str]] = {}
+    for r in runs:
+        seen_this_run = set()
+        for phrase in r.scoring_speculative:
+            identity = tuple(_tokenize(phrase))
+            if identity in seen_this_run:
+                continue
+            seen_this_run.add(identity)
+            variants_by_identity.setdefault(identity, []).append(phrase)
+
+    scoring_speculative = []
+    display_speculative = []
+    for variants in variants_by_identity.values():
+        if len(variants) < 2:
+            continue
+        scoring_speculative.append(variants[0])
+        for variant in variants:
+            _, span = _verify_and_locate(variant, sections)
+            if span is not None:
+                display_speculative.append(span)
+                break
+
+    return ProjectedExtraction(
+        five_ws=FiveWs(**merged_five_ws),
+        transaction_detail_cited=transaction_detail_cited,
+        transaction_detail_quote=transaction_detail_quote,
+        red_flags_mentioned=red_flags_mentioned,
+        display_speculative=display_speculative,
+        scoring_speculative=scoring_speculative,
+        sections_present=run1.sections_present,
     )
-    merged["speculative_phrases"] = chosen["speculative_phrases"]
-
-    merged["sections_present"] = run1[
-        "sections_present"
-    ]  # already computed from the request elsewhere in extract(), identical across all runs by construction, any run's copy is fine here
-
-    return merged
 
 
 @router.get("/api/sar-sandbox/cases")
@@ -753,8 +1153,8 @@ def get_case(case_id: str):
     return JSONResponse(content=display)
 
 
-@router.post("/api/sar-sandbox/extract")
-def extract(req: ExtractRequest, request: Request):
+@router.post("/api/sar-sandbox/extract", response_model=ExtractResponse)
+def extract(req: ExtractRequest, request: Request) -> ExtractResponse:
     if _extract_rate_limited(request):
         raise HTTPException(
             status_code=429,
@@ -765,19 +1165,17 @@ def extract(req: ExtractRequest, request: Request):
     if case is None:
         raise HTTPException(status_code=404, detail=f"Unknown case_id: {req.case_id}")
 
-    extraction_dict = _extract_with_consistency(case, req)
+    projected = _extract_with_consistency(case, req, case["red_flags"])
+    scoring = score_extraction(projected, case["red_flags"])
 
-    # Computed from the submitted fields, not the model's judgement: whether
-    # a section was filled in is a fact about the request, not something
-    # that needs an LLM to assess, and leaving it to the model's judgement
-    # risked exactly the kind of drift a scoring input can't tolerate.
-    extraction_dict["sections_present"] = {
-        "intro": bool(req.intro.strip()),
-        "investigative_body": bool(req.investigative_body.strip()),
-        "final_disposition": bool(req.final_disposition.strip()),
-    }
-
-    extraction_dict = _verify_quotes(extraction_dict, req)
-    scoring = score_extraction(extraction_dict, case["red_flags"])
-
-    return JSONResponse(content={"extraction": extraction_dict, "scoring": scoring})
+    return ExtractResponse(
+        extraction=ExtractedContent(
+            five_ws=projected.five_ws,
+            red_flags_mentioned=projected.red_flags_mentioned,
+            speculative_phrases=projected.display_speculative,
+            transaction_detail_cited=projected.transaction_detail_cited,
+            transaction_detail_quote=projected.transaction_detail_quote,
+            sections_present=projected.sections_present,
+        ),
+        scoring=ScoringResult(**scoring),
+    )

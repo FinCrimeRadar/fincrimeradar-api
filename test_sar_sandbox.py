@@ -6,6 +6,7 @@ Run with pytest, or directly: python test_sar_sandbox.py
 """
 
 import contextlib
+import copy
 import io
 import json
 import shutil
@@ -18,7 +19,10 @@ from pydantic import ValidationError
 import routes_sar_sandbox
 from routes_sar_sandbox import (
     _CASES_CACHE,
+    ExtractionResult,
+    ExtractRequest,
     SarCase,
+    extract,
     get_case,
     get_case_display,
     get_case_full,
@@ -121,14 +125,28 @@ def test_sar_003_scoring_uses_only_the_six_approved_indicator_ids():
     assert "law enforcement" not in combined_labels
     assert "solicitor" not in combined_labels
 
+    # score_extraction only accepts data that has already been through
+    # _project_verified_content, so every quote here has to be a genuine,
+    # verifiable substring of the narrative below, not the placeholder "x"
+    # this test used before that requirement existed.
+    req = ExtractRequest(
+        case_id="sar-003",
+        intro="This SAR concerns a customer of the firm regarding suspicious activity.",
+        investigative_body="The customer conducted several unusual transactions during the review period.",
+        final_disposition="The account activity is reported as suspicious for review.",
+    )
     extraction = {
-        "five_ws": {w: {"addressed": True, "quote": "x"} for w in ["who", "what", "when", "where", "why"]},
+        "five_ws": {
+            w: {"addressed": True, "quote": req.intro} for w in ["who", "what", "when", "where", "why"]
+        },
         "red_flags_mentioned": ["rf1", "rf3", "rf6", "not-a-real-id"],
         "transaction_detail_cited": True,
+        "transaction_detail_quote": req.investigative_body,
         "speculative_phrases": [],
         "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
     }
-    scoring = score_extraction(extraction, case["red_flags"])
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case["red_flags"])
+    scoring = score_extraction(projected, case["red_flags"])
 
     # 3 valid ids matched (rf1, rf3, rf6) at 5 points each; the unmatched
     # not-a-real-id must not contribute, proving the score only trusts ids
@@ -643,6 +661,770 @@ def test_existing_cases_remain_unchanged():
     assert weekend_courier["title"] == "The Weekend Courier"
     assert [rf["id"] for rf in weekend_courier["red_flags"]] == ["rfA", "rfB", "rfC", "rfD", "rfE", "rfF"]
     assert len(weekend_courier["distractor_facts"]) == 2
+
+
+class _FakeExtractRequestContext:
+    """Minimal stand-in for FastAPI's Request, just enough for
+    _extract_rate_limited's headers.get and client.host lookups."""
+
+    headers = {}
+    client = None
+
+
+def test_extract_response_never_leaks_unverified_model_content():
+    # F4: a mocked model result puts a real red flag label and a
+    # distractor string into every free text field it can, none of them
+    # genuine substrings of the submitted narrative. None of that
+    # invented content may reach the client: red_flags_mentioned must
+    # hold only ids the case's own answer key actually has, and the
+    # speculative phrase must be dropped before scoring ever sees it, so
+    # it cannot move speculative_score either.
+    case = get_case_full("sar-003")
+    real_red_flag_label = case["red_flags"][0]["label"]
+    distractor_text = case["distractor_facts"][0]
+    poison = real_red_flag_label + " :: " + distractor_text
+
+    poisoned_result = ExtractionResult(
+        five_ws={
+            w: {"addressed": True, "quote": poison}
+            for w in ["who", "what", "when", "where", "why"]
+        },
+        red_flags_mentioned=["rf1", "rf2", "rf1", "not-a-real-id"],
+        transaction_detail_cited=True,
+        transaction_detail_quote=poison,
+        speculative_phrases=[poison],
+    )
+
+    real_call_once = routes_sar_sandbox._call_extraction_once
+    routes_sar_sandbox._call_extraction_once = lambda case_arg, req_arg: poisoned_result
+    try:
+        req = ExtractRequest(
+            case_id="sar-003",
+            intro="A short generic intro naming no poisoned content.",
+            investigative_body="A short generic investigative body naming no poisoned content.",
+            final_disposition="A short generic disposition naming no poisoned content.",
+        )
+        response = extract(req, _FakeExtractRequestContext())
+        body = response.model_dump()
+    finally:
+        routes_sar_sandbox._call_extraction_once = real_call_once
+
+    dumped = json.dumps(body)
+    assert real_red_flag_label not in dumped
+    assert distractor_text not in dumped
+    assert poison not in dumped
+
+    # deduplicated, order preserved, the invalid id dropped
+    assert body["extraction"]["red_flags_mentioned"] == ["rf1", "rf2"]
+    for entry in body["extraction"]["five_ws"].values():
+        assert entry["quote"] is None
+        # review finding 1: a quote that fails verification must clear the
+        # paired boolean too, not just its own quote text
+        assert entry["addressed"] is False
+    assert body["extraction"]["transaction_detail_quote"] is None
+    assert body["extraction"]["transaction_detail_cited"] is False
+    assert body["extraction"]["speculative_phrases"] == []
+    # zero verified speculative phrases scores as clean language, the
+    # unverified one must not have been counted against the trainee
+    assert body["scoring"]["speculative_score"] == 10
+
+
+def test_score_parity_for_the_23_sep_production_payloads():
+    # F4 score parity: the three 23 Sep production smoke submissions (A,
+    # B1, B2), their actual submitted narratives and their actual recorded
+    # extraction JSON, replayed through the current verification and
+    # scoring pipeline (_project_verified_content then score_extraction,
+    # score_extraction no longer accepts raw, unprojected extraction data)
+    # against the total each one actually scored in production. A change
+    # would only appear if a recorded phrase was not an exact substring of
+    # its own recorded narrative. All three were already clean, so the
+    # expected result is no change at all.
+    red_flags = get_case_full("sar-003")["red_flags"]
+
+    payload_a_narrative = dict(
+        case_id="sar-003",
+        intro=(
+            "This report concerns a customer of the firm. Activity on the account "
+            "appeared unusual and inconsistent with what we would expect."
+        ),
+        investigative_body=(
+            "The customer received several payments that did not seem to fit their "
+            "profile. We were not satisfied with the explanation provided and "
+            "consider the activity suspicious."
+        ),
+        final_disposition="We suspect the funds may be the proceeds of crime.",
+    )
+    payload_a_extraction = {
+        "five_ws": {
+            "who": {"addressed": False, "quote": None},
+            "what": {"addressed": False, "quote": None},
+            "when": {"addressed": False, "quote": None},
+            "where": {"addressed": False, "quote": None},
+            "why": {"addressed": False, "quote": None},
+        },
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": ["We suspect the funds may be the proceeds of crime."],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+
+    payload_b_narrative = dict(
+        case_id="sar-003",
+        intro=(
+            "This SAR concerns Aldercroft Property Services Ltd. The firm received "
+            "a verified law enforcement information request about the director."
+        ),
+        investigative_body=(
+            "Because law enforcement has shown interest in the director, we consider "
+            "the account activity suspicious. The request indicates the director may "
+            "be involved in criminal activity."
+        ),
+        final_disposition="We suspect money laundering on the basis of the law enforcement interest.",
+    )
+    payload_b1_extraction = {
+        "five_ws": {
+            "who": {"addressed": True, "quote": "This SAR concerns Aldercroft Property Services Ltd."},
+            "what": {"addressed": False, "quote": None},
+            "when": {"addressed": False, "quote": None},
+            "where": {"addressed": False, "quote": None},
+            "why": {
+                "addressed": True,
+                "quote": "Because law enforcement has shown interest in the director, we consider the account activity suspicious.",
+            },
+        },
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": [
+            "The request indicates the director may be involved in criminal activity.",
+            "We suspect money laundering on the basis of the law enforcement interest.",
+        ],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+    payload_b2_extraction = {
+        "five_ws": {
+            "who": {"addressed": True, "quote": "This SAR concerns Aldercroft Property Services Ltd."},
+            "what": {"addressed": False, "quote": None},
+            "when": {"addressed": False, "quote": None},
+            "where": {"addressed": False, "quote": None},
+            "why": {
+                "addressed": True,
+                "quote": "The request indicates the director may be involved in criminal activity.",
+            },
+        },
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": [
+            "The request indicates the director may be involved in criminal activity.",
+            "We suspect money laundering on the basis of the law enforcement interest.",
+        ],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+
+    cases = {
+        "A": (payload_a_narrative, payload_a_extraction, 5),
+        "B1": (payload_b_narrative, payload_b1_extraction, 25),
+        "B2": (payload_b_narrative, payload_b2_extraction, 25),
+    }
+
+    for name, (narrative, extraction, recorded_total) in cases.items():
+        req = ExtractRequest(**narrative)
+        projected = routes_sar_sandbox._project_verified_content(
+            copy.deepcopy(extraction), req, red_flags
+        )
+        scoring = score_extraction(projected, red_flags)
+
+        assert scoring["total"] == recorded_total, (
+            f"{name}: score under the current verification and scoring pipeline "
+            f"does not match the recorded production total "
+            f"(recorded={recorded_total}, actual={scoring['total']}). All three payloads' "
+            f"phrases were exact substrings of their own recorded narrative, so no "
+            f"change was expected; a change here means one of them was not."
+        )
+
+
+def test_score_extraction_raises_on_unprojected_extraction():
+    # score_extraction trusts every field it reads and applies no
+    # verification of its own, so it must refuse to score data that was
+    # never passed through _project_verified_content, rather than silently
+    # falling back to the model's raw, unverified claims.
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    extraction = {
+        "five_ws": {w: {"addressed": False, "quote": None} for w in ["who", "what", "when", "where", "why"]},
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": [],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+    try:
+        score_extraction(extraction, case_red_flags)
+        raise AssertionError("expected TypeError for a forged dict passed to score_extraction")
+    except TypeError as exc:
+        assert "_project_verified_content" in str(exc)
+
+
+def test_normalise_for_match_collapses_whitespace_and_casefolds():
+    assert routes_sar_sandbox._normalise_for_match("  Hello   World  ") == "hello world"
+    assert routes_sar_sandbox._normalise_for_match("Hello\tWorld\n") == "hello world"
+
+
+def test_normalise_for_match_folds_curly_quotes_to_straight():
+    assert routes_sar_sandbox._normalise_for_match("“Hello”") == '"hello"'
+    assert routes_sar_sandbox._normalise_for_match("It’s fine") == "it's fine"
+
+
+def test_normalise_for_match_folds_dashes_to_hyphen():
+    assert routes_sar_sandbox._normalise_for_match("law–enforcement") == "law-enforcement"
+    assert routes_sar_sandbox._normalise_for_match("law—enforcement") == "law-enforcement"
+    assert routes_sar_sandbox._normalise_for_match("law-enforcement") == "law-enforcement"
+
+
+def test_normalise_for_match_is_case_insensitive():
+    assert routes_sar_sandbox._normalise_for_match("EXAMPLE TRADING LTD") == "example trading ltd"
+
+
+def test_verify_and_locate_enforces_the_token_floor_and_stopword_rule():
+    # Replaces the old 3-word floor: verification now runs on tokens (see
+    # _tokenize), requires at least 2 of them, and requires at least one
+    # to be numeric or outside the stopword list. Covered here alongside
+    # the normalisation tests above per review finding 2.
+    sections = ["The firm reviewed the account activity thoroughly."]
+
+    # a single token never verifies, common word or not: the floor is on
+    # token count, checked before the stopword rule or any section lookup
+    for candidate in ("firm", "the"):
+        verified, span = routes_sar_sandbox._verify_and_locate(candidate, sections)
+        assert verified is False
+        assert span is None
+
+    # two tokens, both in the stopword list: rule (b) requires at least
+    # one token to be numeric or not a stopword, and neither "of" nor
+    # "the" qualifies, regardless of whether the phrase appears anywhere
+    verified, span = routes_sar_sandbox._verify_and_locate("of the", sections)
+    assert verified is False
+    assert span is None
+
+    # two tokens, one a genuine content word, contiguous in the section:
+    # verifies and returns the exact original span
+    verified, span = routes_sar_sandbox._verify_and_locate("The firm", sections)
+    assert verified is True
+    assert span == "The firm"
+
+
+def test_verify_and_locate_matches_cosmetic_variants_but_withholds_the_span():
+    sections = ["The report concerns a law–enforcement request about the director."]
+    # the model's quote uses a plain hyphen where the narrative has an en
+    # dash: normalisation must still verify it, but since it is not the
+    # exact original substring, no display text is returned
+    verified, span = routes_sar_sandbox._verify_and_locate(
+        "a law-enforcement request about the director", sections
+    )
+    assert verified is True
+    assert span is None
+
+
+def test_verify_and_locate_does_not_join_across_sections():
+    # The cross-section join is removed entirely: rule (c) requires a
+    # candidate's token sequence to occur contiguously within ONE
+    # section's own token sequence, never across a join of several. A
+    # candidate built from one section's last word plus the next
+    # section's first word must not verify, even though the phrase reads
+    # naturally end to end.
+    sections = [
+        "The firm reviewed the account",
+        "activity over the review period.",
+    ]
+    verified, span = routes_sar_sandbox._verify_and_locate(
+        "the account activity over the review period", sections
+    )
+    assert verified is False
+    assert span is None
+
+
+def test_verify_and_locate_does_not_match_across_token_boundaries():
+    # Plain character-substring matching would wrongly find "he sent 47"
+    # inside "she sent 47000 yesterday": "he" is a substring of "she" and
+    # "47" is a prefix of "47000". Token based matching, where each token
+    # must line up whole, must not.
+    sections = ["Records show she sent 47000 yesterday to the same account."]
+    verified, span = routes_sar_sandbox._verify_and_locate("he sent 47", sections)
+    assert verified is False
+    assert span is None
+
+
+def test_verify_and_locate_verifies_a_short_content_bearing_phrase():
+    sections = ["Payments were made in July to an overseas account."]
+    verified, span = routes_sar_sandbox._verify_and_locate("in July", sections)
+    assert verified is True
+    assert span == "in July"
+
+
+def test_verify_and_locate_verifies_a_comma_grouped_number_token():
+    sections = ["The customer transferred 47,250 pounds to an overseas account."]
+    verified, span = routes_sar_sandbox._verify_and_locate("47,250 pounds", sections)
+    assert verified is True
+    assert span == "47,250 pounds"
+
+
+def test_verify_and_locate_fails_closed_on_an_unmatched_script():
+    # Review finding 2: tokenising is English-only by policy, so a
+    # character _TOKEN_RE cannot recognise (a Han character here) is
+    # dropped as a separator, the same as punctuation, unless explicitly
+    # checked for. "张三 sent funds" tokenises to exactly ["sent", "funds"]
+    # if that residual character is not caught, and would wrongly verify
+    # against a section that only ever said "sent funds". It must not.
+    sections = ["Records show sent funds to the account on the same day."]
+    verified, span = routes_sar_sandbox._verify_and_locate("张三 sent funds", sections)
+    assert verified is False
+    assert span is None
+
+
+def test_verify_and_locate_fails_closed_on_an_unfolded_accented_letter():
+    # NFKC does not fold "O with stroke" to a plain "o": it is a distinct
+    # letter, not a combining-mark decomposition. _WORD_TOKEN is [a-z]
+    # only, so "O with stroke" is skipped as a separator unless the
+    # unmatched-character check catches it, the same failure mode as the
+    # Han character above, for a different reason (an unfolded accented
+    # Latin letter rather than a non-Latin script).
+    sections = ["A generic narrative about an account transfer to an overseas branch."]
+    verified, span = routes_sar_sandbox._verify_and_locate("Østerbro account transfer", sections)
+    assert verified is False
+    assert span is None
+
+
+def test_verify_and_locate_tokenises_a_currency_symbol_and_requires_the_amount():
+    # Review finding 3: a currency symbol is its own token, not a
+    # separator, so a candidate and a section differing only in which
+    # currency (or none) prefixed the same number no longer silently
+    # match. The symbol alone is not substantive evidence: "£" on its own
+    # never verifies (a single token, under the floor regardless).
+    sections = ["The customer transferred £47,250 to an overseas account."]
+
+    verified, span = routes_sar_sandbox._verify_and_locate("£47,250", sections)
+    assert verified is True
+    assert span == "£47,250"
+
+    verified, span = routes_sar_sandbox._verify_and_locate("£", sections)
+    assert verified is False
+    assert span is None
+
+
+def test_verify_and_locate_matches_across_a_currency_symbol_gap():
+    # The candidate's own token stream need not include the symbol for a
+    # contiguous match: the section's currency-symbol token just has to
+    # not be part of the sublist the candidate's tokens line up against.
+    sections = ["Payment of £47,250 from R. Aldous was recorded on the ledger."]
+    verified, span = routes_sar_sandbox._verify_and_locate("47,250 from R. Aldous", sections)
+    assert verified is True
+    assert span == "47,250 from R. Aldous"
+
+
+def _sequential_extraction_mock(results):
+    responses = iter(results)
+    return lambda case_arg, req_arg: next(responses)
+
+
+def test_majority_vote_fabricated_quote_from_majority_does_not_earn_credit():
+    # F4 review finding 3: exercise _extract_with_consistency's 3-run
+    # majority-vote merge path, not just the common 2-run agreement path.
+    # Two of three runs agree "who" is addressed and cite the same
+    # fabricated quote (not present anywhere in the narrative); the third
+    # disagrees on transaction_detail_cited, forcing the tie-break third
+    # call. The merge inherits the majority's fabricated quote, but
+    # _project_verified_content must still clear both the quote and the
+    # addressed boolean: agreement among the model's own runs is not
+    # evidence a quote is genuine.
+    fabricated_who_quote = "The customer confirmed foreign beneficiary details by phone"
+
+    def result(who_addressed, who_quote, transaction_cited):
+        return ExtractionResult(
+            five_ws={
+                "who": {"addressed": who_addressed, "quote": who_quote},
+                "what": {"addressed": False, "quote": None},
+                "when": {"addressed": False, "quote": None},
+                "where": {"addressed": False, "quote": None},
+                "why": {"addressed": False, "quote": None},
+            },
+            red_flags_mentioned=[],
+            transaction_detail_cited=transaction_cited,
+            transaction_detail_quote=None,
+            speculative_phrases=[],
+        )
+
+    real_call_once = routes_sar_sandbox._call_extraction_once
+    routes_sar_sandbox._call_extraction_once = _sequential_extraction_mock([
+        result(True, fabricated_who_quote, True),
+        result(True, fabricated_who_quote, False),  # disagrees, forces run3
+        result(False, None, False),
+    ])
+    try:
+        req = ExtractRequest(
+            case_id="sar-003",
+            intro="A short generic intro naming no poisoned content.",
+            investigative_body="A short generic investigative body naming no poisoned content.",
+            final_disposition="A short generic disposition naming no poisoned content.",
+        )
+        response = extract(req, _FakeExtractRequestContext())
+        body = response.model_dump()
+    finally:
+        routes_sar_sandbox._call_extraction_once = real_call_once
+
+    assert body["extraction"]["five_ws"]["who"]["addressed"] is False
+    assert body["extraction"]["five_ws"]["who"]["quote"] is None
+
+
+def test_majority_vote_genuine_quote_survives_a_lone_fabricating_run():
+    genuine_who_quote = "This SAR concerns Example Trading Ltd"
+    fabricated_who_quote = "The customer confirmed foreign beneficiary details by phone"
+
+    def result(who_addressed, who_quote, transaction_cited):
+        return ExtractionResult(
+            five_ws={
+                "who": {"addressed": who_addressed, "quote": who_quote},
+                "what": {"addressed": False, "quote": None},
+                "when": {"addressed": False, "quote": None},
+                "where": {"addressed": False, "quote": None},
+                "why": {"addressed": False, "quote": None},
+            },
+            red_flags_mentioned=[],
+            transaction_detail_cited=transaction_cited,
+            transaction_detail_quote=None,
+            speculative_phrases=[],
+        )
+
+    real_call_once = routes_sar_sandbox._call_extraction_once
+    routes_sar_sandbox._call_extraction_once = _sequential_extraction_mock([
+        result(True, genuine_who_quote, True),
+        result(True, genuine_who_quote, False),  # disagrees, forces run3
+        result(True, fabricated_who_quote, False),  # the lone fabricator
+    ])
+    try:
+        req = ExtractRequest(
+            case_id="sar-003",
+            intro="This SAR concerns Example Trading Ltd, a customer of the firm.",
+            investigative_body="A short generic investigative body naming no poisoned content.",
+            final_disposition="A short generic disposition naming no poisoned content.",
+        )
+        response = extract(req, _FakeExtractRequestContext())
+        body = response.model_dump()
+    finally:
+        routes_sar_sandbox._call_extraction_once = real_call_once
+
+    assert body["extraction"]["five_ws"]["who"]["addressed"] is True
+    assert body["extraction"]["five_ws"]["who"]["quote"] == genuine_who_quote
+    assert fabricated_who_quote not in json.dumps(body)
+
+
+def test_majority_vote_excludes_poisoned_content_confined_to_the_disagreeing_run():
+    case = get_case_full("sar-003")
+    real_red_flag_label = case["red_flags"][0]["label"]
+    distractor_text = case["distractor_facts"][0]
+    poison = real_red_flag_label + " :: " + distractor_text
+
+    def clean_five_ws(why_addressed=False, why_quote=None):
+        return {
+            "who": {"addressed": False, "quote": None},
+            "what": {"addressed": False, "quote": None},
+            "when": {"addressed": False, "quote": None},
+            "where": {"addressed": False, "quote": None},
+            "why": {"addressed": why_addressed, "quote": why_quote},
+        }
+
+    run1 = ExtractionResult(
+        five_ws=clean_five_ws(),
+        red_flags_mentioned=[],
+        transaction_detail_cited=False,
+        transaction_detail_quote=None,
+        speculative_phrases=[],
+    )
+    run2 = ExtractionResult(
+        five_ws=clean_five_ws(),
+        red_flags_mentioned=[],
+        transaction_detail_cited=False,
+        transaction_detail_quote=None,
+        speculative_phrases=["a phrase not actually in the narrative"],  # differs in count, forces run3
+    )
+    run3 = ExtractionResult(
+        five_ws=clean_five_ws(why_addressed=True, why_quote=poison),
+        red_flags_mentioned=["rf1"],
+        transaction_detail_cited=True,
+        transaction_detail_quote=poison,
+        speculative_phrases=[poison],
+    )
+
+    real_call_once = routes_sar_sandbox._call_extraction_once
+    routes_sar_sandbox._call_extraction_once = _sequential_extraction_mock([run1, run2, run3])
+    try:
+        req = ExtractRequest(
+            case_id="sar-003",
+            intro="A short generic intro naming no poisoned content.",
+            investigative_body="A short generic investigative body naming no poisoned content.",
+            final_disposition="A short generic disposition naming no poisoned content.",
+        )
+        response = extract(req, _FakeExtractRequestContext())
+        body = response.model_dump()
+    finally:
+        routes_sar_sandbox._call_extraction_once = real_call_once
+
+    dumped = json.dumps(body)
+    assert real_red_flag_label not in dumped
+    assert distractor_text not in dumped
+    assert poison not in dumped
+    assert body["extraction"]["red_flags_mentioned"] == []
+    assert body["extraction"]["five_ws"]["why"]["addressed"] is False
+    assert body["extraction"]["five_ws"]["why"]["quote"] is None
+    assert body["extraction"]["transaction_detail_cited"] is False
+    assert body["extraction"]["transaction_detail_quote"] is None
+    assert body["extraction"]["speculative_phrases"] == []
+
+
+def test_verify_before_vote_two_run_disagreement_resolves_true_by_majority():
+    # Review finding 1 (task item 5, "two-run path"): run 1 claims "who"
+    # is addressed with a fabricated quote, run 2 claims the same with a
+    # genuine one. Projected before comparison, the two runs disagree
+    # (run 1's own addressed flag collapses to False once its quote
+    # fails to verify, run 2's stays True), so a third run is needed.
+    # Two of the three genuinely support the question being addressed:
+    # credit is awarded and the genuine quote, never the fabricated one,
+    # is what reaches the client.
+    fabricated_who_quote = "The customer confirmed foreign beneficiary details by phone during a recorded call"
+    genuine_who_quote = "This SAR concerns Example Trading Ltd, a corporate customer of the firm."
+
+    def result(who_quote):
+        return ExtractionResult(
+            five_ws={
+                "who": {"addressed": True, "quote": who_quote},
+                "what": {"addressed": False, "quote": None},
+                "when": {"addressed": False, "quote": None},
+                "where": {"addressed": False, "quote": None},
+                "why": {"addressed": False, "quote": None},
+            },
+            red_flags_mentioned=[],
+            transaction_detail_cited=False,
+            transaction_detail_quote=None,
+            speculative_phrases=[],
+        )
+
+    real_call_once = routes_sar_sandbox._call_extraction_once
+    routes_sar_sandbox._call_extraction_once = _sequential_extraction_mock([
+        result(fabricated_who_quote),
+        result(genuine_who_quote),
+        result(genuine_who_quote),
+    ])
+    try:
+        req = ExtractRequest(
+            case_id="sar-003",
+            intro="This SAR concerns Example Trading Ltd, a corporate customer of the firm.",
+            investigative_body="A short generic investigative body naming no poisoned content.",
+            final_disposition="A short generic disposition naming no poisoned content.",
+        )
+        response = extract(req, _FakeExtractRequestContext())
+        body = response.model_dump()
+    finally:
+        routes_sar_sandbox._call_extraction_once = real_call_once
+
+    assert fabricated_who_quote not in json.dumps(body)
+    assert body["extraction"]["five_ws"]["who"]["addressed"] is True
+    assert body["extraction"]["five_ws"]["who"]["quote"] == genuine_who_quote
+    assert body["scoring"]["five_ws_score"] == 10
+
+
+def test_verify_before_vote_three_run_tiebreak_surfaces_the_only_displayable_quote():
+    # "Three-run path" (task item 5): same shape, but the genuine text is
+    # only exactly recoverable from the third run. Run 1 is fabricated
+    # (fails outright, addressed collapses to False). Run 2's quote
+    # verifies only through normalisation, an all-caps variant of the
+    # true sentence, so it earns addressed credit but has no exact,
+    # displayable span of its own (quote is None). Run 3 supplies the
+    # same sentence verbatim: the first run with both addressed=True and
+    # a non-null quote, so its quote is the one that surfaces.
+    intro = "This SAR concerns Example Trading Ltd, a corporate customer of the firm."
+    fabricated_who_quote = "The customer confirmed foreign beneficiary details by phone during a recorded call"
+    case_variant_who_quote = intro.upper()
+    genuine_who_quote = intro
+
+    def result(who_quote):
+        return ExtractionResult(
+            five_ws={
+                "who": {"addressed": True, "quote": who_quote},
+                "what": {"addressed": False, "quote": None},
+                "when": {"addressed": False, "quote": None},
+                "where": {"addressed": False, "quote": None},
+                "why": {"addressed": False, "quote": None},
+            },
+            red_flags_mentioned=[],
+            transaction_detail_cited=False,
+            transaction_detail_quote=None,
+            speculative_phrases=[],
+        )
+
+    real_call_once = routes_sar_sandbox._call_extraction_once
+    routes_sar_sandbox._call_extraction_once = _sequential_extraction_mock([
+        result(fabricated_who_quote),
+        result(case_variant_who_quote),
+        result(genuine_who_quote),
+    ])
+    try:
+        req = ExtractRequest(
+            case_id="sar-003",
+            intro=intro,
+            investigative_body="A short generic investigative body naming no poisoned content.",
+            final_disposition="A short generic disposition naming no poisoned content.",
+        )
+        response = extract(req, _FakeExtractRequestContext())
+        body = response.model_dump()
+    finally:
+        routes_sar_sandbox._call_extraction_once = real_call_once
+
+    assert fabricated_who_quote not in json.dumps(body)
+    assert case_variant_who_quote not in json.dumps(body)
+    assert body["extraction"]["five_ws"]["who"]["addressed"] is True
+    assert body["extraction"]["five_ws"]["who"]["quote"] == genuine_who_quote
+
+
+def test_speculative_identity_agreement_ignores_raw_count_matching():
+    # Review finding 1 continued: comparing raw phrase COUNTS between two
+    # runs treated "1 fabricated phrase" and "1 genuine phrase" as
+    # agreement, since both raw lists have length 1, regardless of
+    # whether their content had anything in common. Identity sets built
+    # from each run's own VERIFIED (projected) phrases correctly
+    # disagree here: run 1's fabricated phrase does not survive
+    # projection at all (empty set), run 2's genuine one does (one-item
+    # set), forcing the tie-breaking third call instead of silently
+    # agreeing. The genuine phrase then appears in 2 of the 3 runs (run 2
+    # and run 3), so it is still penalised even though run 1 offered
+    # only a fabrication.
+    fabricated_phrase = "This is clearly obvious money laundering with no factual basis whatsoever"
+    genuine_phrase = "We suspect the funds may be the proceeds of crime."
+
+    def result(speculative_phrases):
+        return ExtractionResult(
+            five_ws={w: {"addressed": False, "quote": None} for w in ["who", "what", "when", "where", "why"]},
+            red_flags_mentioned=[],
+            transaction_detail_cited=False,
+            transaction_detail_quote=None,
+            speculative_phrases=speculative_phrases,
+        )
+
+    real_call_once = routes_sar_sandbox._call_extraction_once
+    routes_sar_sandbox._call_extraction_once = _sequential_extraction_mock([
+        result([fabricated_phrase]),
+        result([genuine_phrase]),
+        result([genuine_phrase]),
+    ])
+    try:
+        req = ExtractRequest(
+            case_id="sar-003",
+            intro="A short generic intro naming no poisoned content.",
+            investigative_body="A short generic investigative body naming no poisoned content.",
+            final_disposition="We suspect the funds may be the proceeds of crime.",
+        )
+        response = extract(req, _FakeExtractRequestContext())
+        body = response.model_dump()
+    finally:
+        routes_sar_sandbox._call_extraction_once = real_call_once
+
+    assert fabricated_phrase not in json.dumps(body)
+    assert body["extraction"]["speculative_phrases"] == [genuine_phrase]
+    assert body["scoring"]["speculative_score"] == 5
+
+
+def _speculative_test_setup(phrase):
+    """A minimal request/extraction pair for exercising just the
+    speculative-phrase split in _project_verified_content: everything else
+    (five_ws, transaction, red flags) is clean so speculative_score is the
+    only thing that can move."""
+    req = ExtractRequest(
+        case_id="sar-003",
+        intro="A short generic intro naming no poisoned content.",
+        investigative_body="A short generic investigative body naming no poisoned content.",
+        final_disposition="We suspect the funds may be the proceeds of crime.",
+    )
+    extraction = {
+        "five_ws": {w: {"addressed": False, "quote": None} for w in ["who", "what", "when", "where", "why"]},
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": [phrase],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+    return req, extraction
+
+
+def test_speculative_normalisation_only_match_is_penalised_but_not_displayed():
+    # A phrase that differs from the narrative only by case (the same rule
+    # covers curly quotes) still verifies under _verify_and_locate's
+    # normalised comparison, but its exact text is not a substring of the
+    # narrative, so it cannot be safely echoed back. The penalty must still
+    # apply: it is the trainee's own speculative language either way.
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    case_variant_phrase = "WE SUSPECT THE FUNDS MAY BE THE PROCEEDS OF CRIME."
+    req, extraction = _speculative_test_setup(case_variant_phrase)
+
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
+    assert projected.display_speculative == []
+    assert projected.scoring_speculative == [case_variant_phrase]
+
+    scoring = score_extraction(projected, case_red_flags)
+    assert scoring["speculative_score"] == 5
+
+
+def test_speculative_exact_match_is_penalised_and_displayed():
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    exact_phrase = "We suspect the funds may be the proceeds of crime."
+    req, extraction = _speculative_test_setup(exact_phrase)
+
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
+    assert projected.display_speculative == [exact_phrase]
+    assert projected.scoring_speculative == [exact_phrase]
+
+    scoring = score_extraction(projected, case_red_flags)
+    assert scoring["speculative_score"] == 5
+
+
+def test_speculative_fabricated_phrase_is_neither_penalised_nor_displayed():
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    fabricated_phrase = "This is clearly obvious money laundering with no factual basis."
+    req, extraction = _speculative_test_setup(fabricated_phrase)
+
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
+    assert projected.display_speculative == []
+    assert projected.scoring_speculative == []
+
+    scoring = score_extraction(projected, case_red_flags)
+    assert scoring["speculative_score"] == 10
+
+
+def test_speculative_two_content_word_phrase_is_penalised():
+    # "clearly guilty" is two tokens, neither a stopword, satisfying both
+    # the token floor and the stopword rule; when it genuinely appears
+    # contiguously in the narrative it is penalised like any other
+    # verified speculative phrase.
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    req = ExtractRequest(
+        case_id="sar-003",
+        intro="A short generic intro naming no poisoned content.",
+        investigative_body="A short generic investigative body naming no poisoned content.",
+        final_disposition="In our view the customer is clearly guilty of laundering these funds.",
+    )
+    extraction = {
+        "five_ws": {w: {"addressed": False, "quote": None} for w in ["who", "what", "when", "where", "why"]},
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": ["clearly guilty"],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
+    assert projected.display_speculative == ["clearly guilty"]
+    assert projected.scoring_speculative == ["clearly guilty"]
+
+    scoring = score_extraction(projected, case_red_flags)
+    assert scoring["speculative_score"] == 5
 
 
 if __name__ == "__main__":
