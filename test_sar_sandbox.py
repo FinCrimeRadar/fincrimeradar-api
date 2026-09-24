@@ -861,8 +861,8 @@ def test_score_extraction_raises_on_unprojected_extraction():
     }
     try:
         score_extraction(extraction, case_red_flags)
-        raise AssertionError("expected KeyError for extraction data never passed through _project_verified_content")
-    except KeyError as exc:
+        raise AssertionError("expected TypeError for a forged dict passed to score_extraction")
+    except TypeError as exc:
         assert "_project_verified_content" in str(exc)
 
 
@@ -886,19 +886,32 @@ def test_normalise_for_match_is_case_insensitive():
     assert routes_sar_sandbox._normalise_for_match("EXAMPLE TRADING LTD") == "example trading ltd"
 
 
-def test_verify_and_locate_rejects_a_candidate_under_three_words():
-    # The 3-word floor lives in _verify_and_locate, not _normalise_for_match
-    # itself, since it is a rule about how much a match is worth, not about
-    # how text is normalised. Covered here alongside the normalisation
-    # tests above per review finding 2.
+def test_verify_and_locate_enforces_the_token_floor_and_stopword_rule():
+    # Replaces the old 3-word floor: verification now runs on tokens (see
+    # _tokenize), requires at least 2 of them, and requires at least one
+    # to be numeric or outside the stopword list. Covered here alongside
+    # the normalisation tests above per review finding 2.
     sections = ["The firm reviewed the account activity thoroughly."]
-    verified, span = routes_sar_sandbox._verify_and_locate("The firm", sections)
+
+    # a single token never verifies, common word or not: the floor is on
+    # token count, checked before the stopword rule or any section lookup
+    for candidate in ("firm", "the"):
+        verified, span = routes_sar_sandbox._verify_and_locate(candidate, sections)
+        assert verified is False
+        assert span is None
+
+    # two tokens, both in the stopword list: rule (b) requires at least
+    # one token to be numeric or not a stopword, and neither "of" nor
+    # "the" qualifies, regardless of whether the phrase appears anywhere
+    verified, span = routes_sar_sandbox._verify_and_locate("of the", sections)
     assert verified is False
     assert span is None
 
-    verified, span = routes_sar_sandbox._verify_and_locate("The firm reviewed", sections)
+    # two tokens, one a genuine content word, contiguous in the section:
+    # verifies and returns the exact original span
+    verified, span = routes_sar_sandbox._verify_and_locate("The firm", sections)
     assert verified is True
-    assert span == "The firm reviewed"
+    assert span == "The firm"
 
 
 def test_verify_and_locate_matches_cosmetic_variants_but_withholds_the_span():
@@ -913,7 +926,13 @@ def test_verify_and_locate_matches_cosmetic_variants_but_withholds_the_span():
     assert span is None
 
 
-def test_verify_and_locate_matches_a_phrase_spanning_a_section_boundary():
+def test_verify_and_locate_does_not_join_across_sections():
+    # The cross-section join is removed entirely: rule (c) requires a
+    # candidate's token sequence to occur contiguously within ONE
+    # section's own token sequence, never across a join of several. A
+    # candidate built from one section's last word plus the next
+    # section's first word must not verify, even though the phrase reads
+    # naturally end to end.
     sections = [
         "The firm reviewed the account",
         "activity over the review period.",
@@ -921,8 +940,33 @@ def test_verify_and_locate_matches_a_phrase_spanning_a_section_boundary():
     verified, span = routes_sar_sandbox._verify_and_locate(
         "the account activity over the review period", sections
     )
+    assert verified is False
+    assert span is None
+
+
+def test_verify_and_locate_does_not_match_across_token_boundaries():
+    # Plain character-substring matching would wrongly find "he sent 47"
+    # inside "she sent 47000 yesterday": "he" is a substring of "she" and
+    # "47" is a prefix of "47000". Token based matching, where each token
+    # must line up whole, must not.
+    sections = ["Records show she sent 47000 yesterday to the same account."]
+    verified, span = routes_sar_sandbox._verify_and_locate("he sent 47", sections)
+    assert verified is False
+    assert span is None
+
+
+def test_verify_and_locate_verifies_a_short_content_bearing_phrase():
+    sections = ["Payments were made in July to an overseas account."]
+    verified, span = routes_sar_sandbox._verify_and_locate("in July", sections)
     assert verified is True
-    assert span == "the account activity over the review period"
+    assert span == "in July"
+
+
+def test_verify_and_locate_verifies_a_comma_grouped_number_token():
+    sections = ["The customer transferred 47,250 pounds to an overseas account."]
+    verified, span = routes_sar_sandbox._verify_and_locate("47,250 pounds", sections)
+    assert verified is True
+    assert span == "47,250 pounds"
 
 
 def _sequential_extraction_mock(results):
@@ -1117,8 +1161,8 @@ def test_speculative_normalisation_only_match_is_penalised_but_not_displayed():
     req, extraction = _speculative_test_setup(case_variant_phrase)
 
     projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
-    assert projected["speculative_phrases"] == []
-    assert projected["_scoring_speculative_phrases"] == [case_variant_phrase]
+    assert projected.display_speculative == []
+    assert projected.scoring_speculative == [case_variant_phrase]
 
     scoring = score_extraction(projected, case_red_flags)
     assert scoring["speculative_score"] == 5
@@ -1130,8 +1174,8 @@ def test_speculative_exact_match_is_penalised_and_displayed():
     req, extraction = _speculative_test_setup(exact_phrase)
 
     projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
-    assert projected["speculative_phrases"] == [exact_phrase]
-    assert projected["_scoring_speculative_phrases"] == [exact_phrase]
+    assert projected.display_speculative == [exact_phrase]
+    assert projected.scoring_speculative == [exact_phrase]
 
     scoring = score_extraction(projected, case_red_flags)
     assert scoring["speculative_score"] == 5
@@ -1143,11 +1187,40 @@ def test_speculative_fabricated_phrase_is_neither_penalised_nor_displayed():
     req, extraction = _speculative_test_setup(fabricated_phrase)
 
     projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
-    assert projected["speculative_phrases"] == []
-    assert projected["_scoring_speculative_phrases"] == []
+    assert projected.display_speculative == []
+    assert projected.scoring_speculative == []
 
     scoring = score_extraction(projected, case_red_flags)
     assert scoring["speculative_score"] == 10
+
+
+def test_speculative_two_content_word_phrase_is_penalised():
+    # "clearly guilty" is two tokens, neither a stopword, satisfying both
+    # the token floor and the stopword rule; when it genuinely appears
+    # contiguously in the narrative it is penalised like any other
+    # verified speculative phrase.
+    case_red_flags = get_case_full("sar-003")["red_flags"]
+    req = ExtractRequest(
+        case_id="sar-003",
+        intro="A short generic intro naming no poisoned content.",
+        investigative_body="A short generic investigative body naming no poisoned content.",
+        final_disposition="In our view the customer is clearly guilty of laundering these funds.",
+    )
+    extraction = {
+        "five_ws": {w: {"addressed": False, "quote": None} for w in ["who", "what", "when", "where", "why"]},
+        "red_flags_mentioned": [],
+        "transaction_detail_cited": False,
+        "transaction_detail_quote": None,
+        "speculative_phrases": ["clearly guilty"],
+        "sections_present": {"intro": True, "investigative_body": True, "final_disposition": True},
+    }
+
+    projected = routes_sar_sandbox._project_verified_content(extraction, req, case_red_flags)
+    assert projected.display_speculative == ["clearly guilty"]
+    assert projected.scoring_speculative == ["clearly guilty"]
+
+    scoring = score_extraction(projected, case_red_flags)
+    assert scoring["speculative_score"] == 5
 
 
 if __name__ == "__main__":
