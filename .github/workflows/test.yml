@@ -1,0 +1,28 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - run: pip install -r requirements.txt
+      - run: python test_sar_sandbox.py
+      # test_sar_sandbox.py only imports routes_sar_sandbox in isolation.
+      # The actual invariant this gate exists for is that a corrupt case
+      # file can no longer crash main.py's own import chain (main.py
+      # imports routes_sar_sandbox at its own top level), so import main
+      # directly too. No secret needed: every import in this chain reads
+      # its env var lazily, confirmed locally with none set.
+      - run: python -c "import main"
