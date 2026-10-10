@@ -63,7 +63,7 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
 
 1. Global upstream budget of 300 upstream requests per five minutes per instance, enforced before each upstream call. When exhausted, return 503 with `Retry-After`. Two facts justify 300: the Render free plan runs a single instance, and a restart resets the in-memory counters mid-window, so two consecutive process lifetimes can each spend 300 inside one Companies House window, which still totals 600 and stays within the limit. If the service ever runs more than one instance, or moves off the free plan, the budget must be divided or moved to shared storage first.
 2. On any upstream 429, stop all upstream calls until the window resets and return 503 with `Retry-After`. If `X-Ratelimit-*` response headers are present, log them. They are not documented in the Swagger or enumerations, so never depend on them for control flow.
-3. Per client IP limit on lookups, for example 10 per minute, returning 429. No proxy-aware client IP helper exists in the service (the three existing limiters take the first `X-Forwarded-For` entry, which a client can prepend). Build `client_ip.py` for KYB only: take the Nth-from-right `X-Forwarded-For` entry, N from the `TRUSTED_PROXY_HOPS` environment variable (default 1 for Render), and fall back to `request.client.host` when the header is missing or has fewer than N entries. Do not migrate the existing limiters in this change.
+3. Per client IP limit on lookups of 10 per minute, returning 429 on the 11th lookup in the window. No proxy-aware client IP helper exists in the service (the three existing limiters take the first `X-Forwarded-For` entry, which a client can prepend). Build `client_ip.py` for KYB only: take the Nth-from-right `X-Forwarded-For` entry, N from the `TRUSTED_PROXY_HOPS` environment variable (default 1 for Render), and fall back to `request.client.host` when the header is missing or has fewer than N entries. Do not migrate the existing limiters in this change.
 4. Response cache keyed by normalised company number, short TTL (for example 15 minutes), in memory. Document that the cache is per instance.
 
 ### Data minimisation (UK GDPR and abuse control)
@@ -129,7 +129,7 @@ PSC rules:
 
 5. The derivation table is applied to PSCs unchanged, using `appointment_verification_start_on`, `appointment_verification_end_on` and `appointment_verification_statement_due_on` from the PSC `identity_verification_details`.
 6. `appointment_verification_statement_date` is supporting evidence only, displayed as "statement can be supplied from <date>". It never changes the derived status.
-7. Only PSCs of kind `individual-person-with-significant-control` derive from their data. Corporate entity and legal person PSC detail models carry no verification fields in the Public Data API, so PSCs of those kinds always derive to `no_verification_data`. The same applies to every other PSC kind (beneficial owner and super secure kinds), which are treated as outside the individual PSC regime until a source shows otherwise.
+7. One derivation applies to every officer and every PSC kind (individual, corporate entity, legal person, beneficial owner and super secure kinds alike). There is no special case by kind. The status depends only on which fields are present in whatever `identity_verification_details` the register returns. A PSC kind whose model carries no verification fields in the Public Data API (corporate entity and legal person detail models) will therefore derive to `no_verification_data` because the fields are absent, not because of its kind. A PSC of any kind that does carry the fields derives normally.
 
 Fixed `does_not_establish` text for this indicator (final wording subject to Codex review): "A supplied verification statement means the individual's identity was verified for this appointment. It does not establish who ultimately owns or controls the company, whether the ownership filings are accurate, the source of funds, or that customer due diligence is complete."
 
@@ -161,7 +161,9 @@ Registered office description identifiers (from `filing_history_descriptions.yml
 5. `change-registered-office-address-limited-liability-partnership-with-date-old-address`
 6. `change-registered-office-address-limited-liability-partnership-with-date-old-address-new-address`
 
-The overseas company identifier `change-registered-office-addres-overseas-company` (sic) means a place of business address change and is excluded.
+Each of the six was checked in `filing_history_descriptions.yml` at the pinned commit and renders as "Registered office address changed" (with old address, new address and date placeholders in the longer variants). Three are for companies (`...-company...`) and three are for limited liability partnerships (`...-limited-liability-partnership...`).
+
+Excluded identifiers, none of which is a registered office change: the register inspection address variants (`change-sail-address-company...`, `change-sail-address-limited-liability-partnership...`, which render as "Register inspection address has been changed" or "Location of register of charges has been changed"), the register move variants (`move-registers-to-sail-...`, `move-registers-to-registered-office-...`), the registered office situation variants (`change-registered-office-situation-...`, a change of jurisdiction), and `change-registered-office-addres-overseas-company` (sic), which means a place of business address change.
 
 Provisional rule: the Swagger types `filingHistoryItem.description` as a plain string and the filing `type` as an unconstrained string, so no OpenAPI document confirms that live responses carry these identifiers. If the first live response shows `description` as rendered text instead of the identifier, disable this indicator and report. Never fall back to category only matching: `category == "address"` also covers filings that are not registered office changes.
 
@@ -189,7 +191,7 @@ Structured log per request: request id, normalised company number (a public iden
 7. Global budget and per IP limit enforced. Cache hit makes zero upstream calls.
 8. Truncation flag set when totals exceed returned items.
 9. Links in upstream responses are never fetched (assert the HTTP client is called only with expected paths).
-10. PSC derivation: the table rows apply to an individual PSC; `appointment_verification_statement_date` never changes status; a corporate entity PSC and a legal person PSC each derive to `no_verification_data` (one test per kind), including when verification-like fields are injected into the fixture.
+10. PSC derivation: the table rows apply to an individual PSC; `appointment_verification_statement_date` never changes status; one fixture per PSC kind in the Swagger kind enum (individual, corporate entity, legal person, super secure, and each beneficial owner kind) with no verification fields, each asserting `no_verification_data`; and one non-individual fixture (corporate entity) that carries the verification fields, asserting it derives normally. The code under test must contain no branch on PSC kind.
 11. Registered office indicator: fires for each of the six identifiers, does not fire for category `address` with any other description, does not fire for the overseas company identifier, and is disabled cleanly when `description` is rendered text.
 12. Client IP helper (`tests/test_client_ip.py`): Nth-from-right selection, `TRUSTED_PROXY_HOPS` parsing and default, spoofed prepended entries do not change the key, fallback to `request.client.host` when the header is missing or too short.
 13. Filing history is sorted by `date` client side regardless of upstream order; PSC string paging fields are coerced; `truncated` is set from totals versus items returned.
@@ -200,7 +202,8 @@ Structured log per request: request id, normalised company number (a public iden
 2. `/code-review` on the real pull request, resolve material findings.
 3. Pratik runs the manual Codex adversarial review on the final diff.
 4. Merge, deploy, then live smoke against production with one real active company and one invalid number, confirming response shape and data minimisation on the deployed service. Our own 503 and `Retry-After` behaviour is proven by tests, not by live smoke (CLAUDE.md section 17).
-5. Publication verification sequence for both repositories touched.
+5. Live spoof test, run against production after the step 4 smoke check, from one client: send 11 lookups of the same valid company number within 60 seconds, each with a different fake `X-Forwarded-For` value sent by the client (for example `203.0.113.1` to `203.0.113.11`). The 11th must return 429. Using one valid company number means requests 2 to 10 are served from the cache and spend no upstream quota. If the 11th does not return 429, the trusted hop count is wrong: block release, set `TRUSTED_PROXY_HOPS` to the correct value, and repeat until it passes. The test depends on Render appending the real client address as the rightmost entry, which this test is also what verifies.
+6. Publication verification sequence for both repositories touched.
 
 ## 10. Out of scope for phase 1
 
