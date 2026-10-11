@@ -1,6 +1,6 @@
 """Companies House KYB company readout, API phase 1.
 
-Spec: docs/specs/kyb-lab-api-spec.md (frozen v1.0). Where this file and the
+Spec: docs/specs/kyb-lab-api-spec.md (v1.2). Where this file and the
 spec disagree, the spec wins and this file is the bug.
 
 GET /api/kyb/company/{company_number} reads one UK company from the Companies
@@ -20,7 +20,7 @@ import re
 import threading
 import time
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -54,6 +54,12 @@ UPSTREAM_429_BLOCK_SECONDS = 300
 
 IP_LIMIT_MAX = 10
 IP_LIMIT_WINDOW_SECONDS = 60
+# Spec v1.2: a weighted allowance charged by upstream calls actually made, 20%
+# of the global budget, so one client cannot drain the shared pool.
+CLIENT_ALLOWANCE_MAX = 60
+CLIENT_ALLOWANCE_WINDOW_SECONDS = 300
+# Hard bound on each per client map (LRU, evicts the oldest key).
+LIMITER_MAX_KEYS = 10_000
 
 CACHE_TTL_SECONDS = 15 * 60
 CACHE_MAX_ENTRIES = 500
@@ -123,6 +129,11 @@ IDV_DOES_NOT_ESTABLISH = (
     "the company or its activity is legitimate. It does not establish who "
     "ultimately owns or controls the company, whether ownership filings are "
     "accurate, the source of funds, or that customer due diligence is complete."
+)
+
+NOT_RETURNED_NOTICE = (
+    "This register section was not returned. FinCrimeRadar draws no conclusion "
+    "from its absence."
 )
 
 NOT_INTERPRETED_LABEL = "fields returned by the register; not interpreted in phase 1"
@@ -366,10 +377,18 @@ class DatedEventOut(_Out):
     role: str | None
 
 
+SourceStatus = Literal["available", "not_returned"]
+
+
+class SourceOut(_Out):
+    source_status: SourceStatus
+
+
 class OfficersOut(_Out):
+    source_status: SourceStatus
     items: list[OfficerItemOut]
     events: list[DatedEventOut]
-    truncated: bool
+    truncated: bool | None
 
 
 class PscItemOut(_Out):
@@ -388,10 +407,12 @@ class StatementOut(_Out):
 
 
 class PscsOut(_Out):
+    records_source_status: SourceStatus
+    statements_source_status: SourceStatus
     items: list[PscItemOut]
     active_statements: list[StatementOut]
     ceased_statements: list[StatementOut]
-    truncated: bool
+    truncated: bool | None
 
 
 class IndicatorOut(_Out):
@@ -399,8 +420,10 @@ class IndicatorOut(_Out):
     label: str
     evidence_state: Literal["register_fact", "frc_assessment"]
     evidence: dict[str, Any]
-    source_endpoint: Literal[
-        "profile", "officers", "pscs", "filing_history", "charges", "insolvency"
+    source_endpoints: list[
+        Literal[
+            "profile", "officers", "pscs", "filing_history", "charges", "insolvency"
+        ]
     ]
     does_not_establish: str
 
@@ -412,8 +435,9 @@ class RegisteredOfficeFilingOut(_Out):
 
 
 class RegisteredOfficeFilingsOut(_Out):
+    source_status: SourceStatus
     items: list[RegisteredOfficeFilingOut]
-    truncated: bool
+    truncated: bool | None
 
 
 class KybResponse(_Out):
@@ -427,6 +451,9 @@ class KybResponse(_Out):
     officers: OfficersOut
     pscs: PscsOut
     registered_office_change_filings: RegisteredOfficeFilingsOut | None
+    charges: SourceOut | None
+    insolvency: SourceOut | None
+    not_returned_notice: str
     does_not_establish: list[str]
     attribution: str
 
@@ -436,7 +463,9 @@ class KybResponse(_Out):
 _state_lock = threading.Lock()
 _budget: deque = deque()
 _blocked_until = 0.0
-_ip_log: dict[str, deque] = {}
+# Per client maps are LRU bounded by LIMITER_MAX_KEYS (spec v1.2).
+_ip_log: OrderedDict[str, deque] = OrderedDict()
+_client_calls: OrderedDict[str, deque] = OrderedDict()
 _cache: dict[str, tuple[float, dict]] = {}
 
 
@@ -476,8 +505,28 @@ def quota_remaining() -> int:
         return max(0, UPSTREAM_BUDGET_MAX - len(_budget))
 
 
-def _take_budget() -> None:
-    """Spend one upstream request or raise a 503 with Retry-After."""
+def _lru_entry(table: OrderedDict, key: str) -> deque:
+    """The key's deque, most recently used. Caller holds the lock.
+
+    Bounded: creating a key past LIMITER_MAX_KEYS evicts the oldest, with no
+    scan of the map.
+    """
+    log = table.get(key)
+    if log is None:
+        log = table[key] = deque()
+        while len(table) > LIMITER_MAX_KEYS:
+            table.popitem(last=False)
+    else:
+        table.move_to_end(key)
+    return log
+
+
+def _take_budget(client: str) -> None:
+    """Spend one upstream request for `client` or raise with Retry-After.
+
+    The client allowance is checked first so a client over its share never
+    consumes the global budget.
+    """
     with _state_lock:
         now = _monotonic()
         if now < _blocked_until:
@@ -486,6 +535,17 @@ def _take_budget() -> None:
                 "Service temporarily unavailable.",
                 "upstream_blocked",
                 max(1, int(_blocked_until - now) + 1),
+            )
+        mine = _lru_entry(_client_calls, client)
+        while mine and now - mine[0] >= CLIENT_ALLOWANCE_WINDOW_SECONDS:
+            mine.popleft()
+        if len(mine) >= CLIENT_ALLOWANCE_MAX:
+            wait = CLIENT_ALLOWANCE_WINDOW_SECONDS - (now - mine[0])
+            raise _Fail(
+                429,
+                "Lookup limit reached. Try again shortly.",
+                "client_allowance_exhausted",
+                max(1, int(wait) + 1),
             )
         _prune_budget(now)
         if len(_budget) >= UPSTREAM_BUDGET_MAX:
@@ -497,6 +557,7 @@ def _take_budget() -> None:
                 max(1, int(wait) + 1),
             )
         _budget.append(now)
+        mine.append(now)
 
 
 def _block_upstream() -> None:
@@ -508,19 +569,12 @@ def _block_upstream() -> None:
 def _ip_limited(key: str) -> bool:
     now = _monotonic()
     with _state_lock:
-        log = _ip_log.setdefault(key, deque())
+        log = _lru_entry(_ip_log, key)
         while log and now - log[0] >= IP_LIMIT_WINDOW_SECONDS:
             log.popleft()
         if len(log) >= IP_LIMIT_MAX:
             return True
         log.append(now)
-        if len(_ip_log) > 5000:
-            for k in [
-                k
-                for k, v in _ip_log.items()
-                if not v or now - v[-1] >= IP_LIMIT_WINDOW_SECONDS
-            ]:
-                del _ip_log[k]
         return False
 
 
@@ -549,6 +603,7 @@ def reset_state_for_tests() -> None:
     with _state_lock:
         _budget.clear()
         _ip_log.clear()
+        _client_calls.clear()
         _cache.clear()
         _blocked_until = 0.0
 
@@ -582,7 +637,8 @@ def _ratelimit_headers(resp) -> dict[str, str]:
 class _Call:
     """Per request upstream bookkeeping for the structured log."""
 
-    def __init__(self):
+    def __init__(self, client: str = "unknown"):
+        self.client = client
         self.count = 0
         self.seconds = 0.0
         self.ratelimit_headers: dict[str, str] = {}
@@ -591,14 +647,16 @@ class _Call:
 def _fetch(path: str, call: _Call, params: dict | None = None):
     """GET one fixed path on the fixed host.
 
-    Returns the parsed JSON, or None for a 404. `path` is always built from a
+    Returns the parsed JSON, or None for a 404 (callers decide what a 404
+    means: only the profile 404 is an error, anywhere else it is `not_returned`).
+    `path` is always built from a
     literal template plus the validated company number, never from a `links`
     value in an upstream payload.
     """
     attempts = 0
     while True:
         attempts += 1
-        _take_budget()
+        _take_budget(call.client)
         call.count += 1
         started = _monotonic()
         try:
@@ -818,7 +876,7 @@ def _indicator(
     id_: str,
     label: str,
     evidence: dict[str, Any],
-    source: str,
+    source: str | list[str],
     does_not_establish: str,
 ) -> IndicatorOut:
     return IndicatorOut(
@@ -826,7 +884,7 @@ def _indicator(
         label=label,
         evidence_state="register_fact",
         evidence=evidence,
-        source_endpoint=source,
+        source_endpoints=[source] if isinstance(source, str) else source,
         does_not_establish=does_not_establish,
     )
 
@@ -842,18 +900,50 @@ def _company_out(p: UpProfile) -> CompanyOut:
 
 
 def _empty_sections():
+    """Unsupported entity type: nothing was requested, so nothing was returned."""
     return (
-        OfficersOut(items=[], events=[], truncated=False),
-        PscsOut(items=[], active_statements=[], ceased_statements=[], truncated=False),
+        OfficersOut(source_status="not_returned", items=[], events=[], truncated=None),
+        PscsOut(
+            records_source_status="not_returned",
+            statements_source_status="not_returned",
+            items=[],
+            active_statements=[],
+            ceased_statements=[],
+            truncated=None,
+        ),
     )
 
 
-def _truncated(total: int | None, returned: int) -> bool:
+def _truncated(total: int | None, returned: int, available: bool = True) -> bool | None:
+    """None when the section was not returned: truncation is then unknown."""
+    if not available:
+        return None
     return total is not None and total > returned
 
 
+def _status(available: bool) -> SourceStatus:
+    return "available" if available else "not_returned"
+
+
+def _get_collection(model, path: str, call: _Call, outcome: str, params=None):
+    """Fetch and parse one collection. Returns (parsed, available)."""
+    raw = _fetch(path, call, params)
+    if raw is None:
+        return model(), False
+    return _parse(model, raw, outcome), True
+
+
+def _endpoints(hits: list[dict[str, Any]]) -> list[str]:
+    """Source endpoints of the contributing records, officers before pscs."""
+    return [
+        endpoint
+        for endpoint, tag in (("officers", "officer"), ("pscs", "psc"))
+        if any(h["source"] == tag for h in hits)
+    ]
+
+
 def _registered_office_filings(
-    filings: list[UpFiling], total_count: int | None
+    filings: list[UpFiling], total_count: int | None, available: bool
 ) -> RegisteredOfficeFilingsOut | None:
     """Provisional list, spec section 6. None means the indicator is disabled."""
     if not REGISTERED_OFFICE_FILINGS_ENABLED:
@@ -879,7 +969,9 @@ def _registered_office_filings(
     # Spec v1.1: same total versus returned rule as the officers list. One page
     # of filing history can miss older registered office changes.
     return RegisteredOfficeFilingsOut(
-        items=hits, truncated=_truncated(total_count, len(filings))
+        source_status=_status(available),
+        items=hits,
+        truncated=_truncated(total_count, len(filings), available),
     )
 
 
@@ -898,6 +990,8 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
     company = _company_out(profile)
 
     def respond(**kw) -> dict:
+        kw.setdefault("charges", None)
+        kw.setdefault("insolvency", None)
         officers, pscs = kw.pop("officers", None), kw.pop("pscs", None)
         if officers is None:
             officers, pscs = _empty_sections()
@@ -908,6 +1002,7 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
             company=company,
             officers=officers,
             pscs=pscs,
+            not_returned_notice=NOT_RETURNED_NOTICE,
             does_not_establish=list(GLOBAL_DOES_NOT_ESTABLISH),
             attribution=ATTRIBUTION.format(retrieved_at=retrieved_iso),
             **kw,
@@ -928,57 +1023,40 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
     link_keys = set((profile.links or {}).keys())
     active = profile.company_status == "active"
 
-    officer_list = _parse(
-        UpOfficerList,
-        _fetch(f"/company/{number}/officers", call, {"items_per_page": ITEMS_PER_PAGE})
-        or {},
-        "bad_officers",
+    page = {"items_per_page": ITEMS_PER_PAGE}
+    officer_list, officers_ok = _get_collection(
+        UpOfficerList, f"/company/{number}/officers", call, "bad_officers", page
     )
-    psc_list = _parse(
+    psc_list, pscs_ok = _get_collection(
         UpPscList,
-        _fetch(
-            f"/company/{number}/persons-with-significant-control",
-            call,
-            {"items_per_page": ITEMS_PER_PAGE},
-        )
-        or {},
+        f"/company/{number}/persons-with-significant-control",
+        call,
         "bad_pscs",
+        page,
     )
-    statement_list = _parse(
+    statement_list, statements_ok = _get_collection(
         UpStatementList,
-        _fetch(
-            f"/company/{number}/persons-with-significant-control-statements",
-            call,
-            {"items_per_page": ITEMS_PER_PAGE},
-        )
-        or {},
+        f"/company/{number}/persons-with-significant-control-statements",
+        call,
         "bad_psc_statements",
+        page,
     )
-    filing_list = _parse(
+    filing_list, filing_ok = _get_collection(
         UpFilingList,
-        _fetch(
-            f"/company/{number}/filing-history",
-            call,
-            {"items_per_page": ITEMS_PER_PAGE},
-        )
-        or {},
+        f"/company/{number}/filing-history",
+        call,
         "bad_filing_history",
+        page,
     )
-    charge_list = None
+    charge_list, charges_ok = None, False
     if "charges" in link_keys:
-        charge_list = _parse(
-            UpChargeList,
-            _fetch(
-                f"/company/{number}/charges", call, {"items_per_page": ITEMS_PER_PAGE}
-            )
-            or {},
-            "bad_charges",
+        charge_list, charges_ok = _get_collection(
+            UpChargeList, f"/company/{number}/charges", call, "bad_charges", page
         )
-    insolvency = None
+    insolvency, insolvency_ok = None, False
     if "insolvency" in link_keys:
-        raw = _fetch(f"/company/{number}/insolvency", call)
-        insolvency = (
-            _parse(UpInsolvency, raw, "bad_insolvency") if raw is not None else None
+        insolvency, insolvency_ok = _get_collection(
+            UpInsolvency, f"/company/{number}/insolvency", call, "bad_insolvency"
         )
 
     officers_src = officer_list.items or []
@@ -1072,16 +1150,29 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
     ceased_statements = [s for s in statement_outs if s.ceased_on]
 
     officers = OfficersOut(
+        source_status=_status(officers_ok),
         items=officer_items,
         events=events,
-        truncated=_truncated(officer_list.total_results, len(officers_src)),
+        truncated=_truncated(
+            officer_list.total_results, len(officers_src), officers_ok
+        ),
+    )
+    psc_truncated = _truncated(psc_list.total_results, len(pscs_src), pscs_ok)
+    statements_truncated = _truncated(
+        statement_list.total_results, len(statements_src), statements_ok
     )
     pscs = PscsOut(
+        records_source_status=_status(pscs_ok),
+        statements_source_status=_status(statements_ok),
         items=pscs_items,
         active_statements=active_statements,
         ceased_statements=ceased_statements,
-        truncated=_truncated(psc_list.total_results, len(pscs_src))
-        or _truncated(statement_list.total_results, len(statements_src)),
+        # Unknown if either list was not returned, else true if either is cut.
+        truncated=(
+            None
+            if psc_truncated is None or statements_truncated is None
+            else psc_truncated or statements_truncated
+        ),
     )
 
     indicators: list[IndicatorOut] = []
@@ -1119,7 +1210,7 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
                     "idv_statement_overdue",
                     "At least one current role has an identity verification statement past its due date",
                     {"records": idv_hits["statement_overdue"]},
-                    "officers",
+                    _endpoints(idv_hits["statement_overdue"]),
                     "A register record that a statement is overdue is not a finding that the person is unverified or that an offence has occurred.",
                 )
             )
@@ -1129,7 +1220,7 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
                     "idv_statement_removed",
                     "At least one current role has a removed identity verification statement",
                     {"records": idv_hits["statement_removed"]},
-                    "officers",
+                    _endpoints(idv_hits["statement_removed"]),
                     "A removed statement record does not establish why it was removed or the person's current verification position.",
                 )
             )
@@ -1191,7 +1282,7 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
                 "A previous name is a register record. It does not establish why the name changed.",
             )
         )
-    if insolvency is not None:
+    if insolvency_ok:
         indicators.append(
             _indicator(
                 "insolvency_history",
@@ -1207,7 +1298,7 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
                 "An insolvency record does not establish current solvency, cause or outcome.",
             )
         )
-    if charge_list is not None:
+    if charges_ok:
         outstanding = [c for c in charge_list.items or [] if c.status == "outstanding"]
         if outstanding:
             indicators.append(
@@ -1270,8 +1361,14 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
         officers=officers,
         pscs=pscs,
         registered_office_change_filings=_registered_office_filings(
-            filings_src, filing_list.total_count
+            filings_src, filing_list.total_count, filing_ok
         ),
+        charges=SourceOut(source_status=_status(charges_ok))
+        if "charges" in link_keys
+        else None,
+        insolvency=SourceOut(source_status=_status(insolvency_ok))
+        if "insolvency" in link_keys
+        else None,
     )
 
 
@@ -1303,8 +1400,9 @@ def _log(
 @router.get("/api/kyb/company/{company_number:path}")
 def kyb_company(company_number: str, request: Request):
     request_id = uuid.uuid4().hex[:12]
-    call = _Call()
-    if _ip_limited(client_ip(request)):
+    ip = client_ip(request)
+    call = _Call(ip)
+    if _ip_limited(ip):
         _log(request_id, None, "ip_rate_limited", call, "n/a")
         raise HTTPException(
             429,

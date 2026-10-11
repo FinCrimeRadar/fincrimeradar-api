@@ -21,7 +21,7 @@ from routes_kyb_lab import UpIdv, derive_idv_status
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).parent / "fixtures" / "kyb"
 SWAGGER = ROOT / "docs" / "specs" / "companies-house-swagger" / "spec"
-NUM = "12345678"
+NUM = "ZZ000001"
 NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
 TODAY = date(2026, 10, 11)
 TEST_KEY = "test-key-not-a-real-key"
@@ -289,7 +289,7 @@ def test_endpoint_empty_number_is_422(ctx):
 
 def test_short_numeric_is_padded_before_upstream(ctx):
     up = ctx.install()
-    ctx.get("12345678")
+    ctx.get(NUM.lower())
     assert up.paths[0] == f"/company/{NUM}"
     up2 = ctx.install(
         routes={"/company/00001234": (404, {})},
@@ -324,9 +324,9 @@ def test_accounts_overdue_uses_next_accounts_only(ctx):
     body = ctx.body()
     assert "accounts_overdue" in indicator_ids(body)
     ind = next(i for i in body["indicators"] if i["id"] == "accounts_overdue")
-    assert (
-        ind["evidence_state"] == "register_fact" and ind["source_endpoint"] == "profile"
-    )
+    assert ind["evidence_state"] == "register_fact" and ind["source_endpoints"] == [
+        "profile"
+    ]
 
 
 def test_confirmation_statement_overdue_fires_and_not(ctx):
@@ -872,7 +872,10 @@ def test_unsupported_type_returns_raw_facts_only(ctx, type_):
     assert body["company"]["name"] == "EXAMPLE TRADING LIMITED"
     assert body["indicators"] == []
     assert body["officers"]["items"] == [] and body["pscs"]["items"] == []
+    assert body["officers"]["source_status"] == "not_returned"
+    assert body["officers"]["truncated"] is None and body["pscs"]["truncated"] is None
     assert body["registered_office_change_filings"] is None
+    assert body["charges"] is None and body["insolvency"] is None
     assert up.paths == [PATHS["profile"]]
 
 
@@ -1288,12 +1291,15 @@ def test_redirects_are_not_followed(monkeypatch):
     assert seen["allow_redirects"] is False
 
 
-def test_sub_resource_404_means_empty_not_error(ctx):
+def test_sub_resource_404_is_not_returned_never_confirmed_empty(ctx):
     ctx.install(
         officers=(404, {}), pscs=(404, {}), statements=(404, {}), filing=(404, {})
     )
     body = ctx.get().json()
     assert body["officers"]["items"] == [] and body["pscs"]["items"] == []
+    assert body["officers"]["source_status"] == "not_returned"
+    assert body["officers"]["truncated"] is None
+    assert body["pscs"]["truncated"] is None
 
 
 def test_ratelimit_headers_are_logged_not_depended_on(ctx, capsys):
@@ -1602,8 +1608,669 @@ def test_disabled_list_has_no_truncated_flag(ctx, monkeypatch):
     assert ctx.body()["registered_office_change_filings"] is None
 
 
+# ------------------------------------------------------------------ synthetic bundle replays
+# Register shaped bundles that are fully synthetic (spec v1.2, section 8 item
+# 26): reserved ZZ company numbers, synthetic names, etags, transaction IDs and
+# charge particulars, dates shifted with their relative gaps kept. They keep
+# the structure observed live (links keys, enumeration identifiers, 404 on
+# empty PSC statements). The live API is never called from tests.
+
+SYNTHETIC = [
+    "active_ltd_outstanding_charges",
+    "dissolved",
+    "active_registered_office_change",
+]
+SYNTHETIC_KEYS = {
+    "profile": "profile",
+    "officers": "officers",
+    "pscs": "pscs",
+    "statements": "statements",
+    "filing": "filing",
+    "charges": "charges",
+    "insolvency": "insolvency",
+}
+
+
+def synthetic_bundle(label):
+    return json.loads(
+        (FIXTURES / f"synthetic_{label}.json").read_text(encoding="utf-8")
+    )
+
+
+def synthetic_routes(bundle):
+    n = bundle["company_number"]
+    suffix = {
+        "profile": "",
+        "officers": "/officers",
+        "pscs": "/persons-with-significant-control",
+        "statements": "/persons-with-significant-control-statements",
+        "filing": "/filing-history",
+        "charges": "/charges",
+        "insolvency": "/insolvency",
+    }
+    routes = {}
+    for key, r in bundle["responses"].items():
+        routes[f"/company/{n}{suffix[key]}"] = (r["status"], r["body"] or {})
+    return n, routes
+
+
+@pytest.mark.parametrize("label", SYNTHETIC)
+def test_synthetic_replay_is_valid_minimised_and_pseudonymised(ctx, label):
+    n, routes = synthetic_routes(synthetic_bundle(label))
+    ctx.install(routes=routes)
+    body = ctx.body(n)
+    assert not FORBIDDEN_KEYS & set(walk_keys(body))
+    names = [o["name"] for o in body["officers"]["items"]] + [
+        p["name"] for p in body["pscs"]["items"]
+    ]
+    assert names and all(re.fullmatch(r"(PERSON|ENTITY) [A-Z]", x) for x in names)
+    assert body["does_not_establish"] == GLOBAL_DNE
+
+
+@pytest.mark.parametrize("label", SYNTHETIC)
+def test_synthetic_links_keys_drive_the_optional_calls(ctx, label):
+    bundle = synthetic_bundle(label)
+    n, routes = synthetic_routes(bundle)
+    up = ctx.install(routes=routes)
+    ctx.body(n)
+    links = bundle["responses"]["profile"]["body"]["links"]
+    assert (f"/company/{n}/charges" in up.paths) == ("charges" in links)
+    assert (f"/company/{n}/insolvency" in up.paths) == ("insolvency" in links)
+
+
+def test_synthetic_deprecated_has_charges_flag_is_unreliable_and_unused(ctx):
+    bundle = synthetic_bundle("active_ltd_outstanding_charges")
+    profile = bundle["responses"]["profile"]["body"]
+    # Observed live: the deprecated flag is false while the link and the
+    # outstanding charges exist. The service must follow the link key.
+    assert profile["has_charges"] is False
+    assert "charges" in profile["links"]
+    n, routes = synthetic_routes(bundle)
+    ctx.install(routes=routes)
+    body = ctx.body(n)
+    assert "outstanding_charges" in indicator_ids(body)
+
+
+def test_synthetic_dissolved_company_gets_register_reported_values_only(ctx):
+    n, routes = synthetic_routes(synthetic_bundle("dissolved"))
+    ctx.install(routes=routes)
+    body = ctx.body(n)
+    assert body["company"]["status"] == "dissolved"
+    assert body["interpretation"]["current_obligations"] == "register_reported_only"
+    assert not {
+        "accounts_overdue",
+        "confirmation_statement_overdue",
+        "idv_statement_overdue",
+    } & set(indicator_ids(body))
+    assert all(
+        o["identity_verification"]["status"] is None for o in body["officers"]["items"]
+    )
+
+
+def test_synthetic_statements_404_is_not_returned_not_confirmed_empty(ctx):
+    bundle = synthetic_bundle("active_registered_office_change")
+    assert bundle["responses"]["statements"]["status"] == 404
+    n, routes = synthetic_routes(bundle)
+    ctx.install(routes=routes)
+    body = ctx.body(n)
+    assert (
+        body["pscs"]["active_statements"] == []
+        and body["pscs"]["ceased_statements"] == []
+    )
+    # Live, this 404 meant the company has no statements. The service cannot
+    # tell that from a missing section, so it reports not_returned (spec v1.2).
+    assert body["pscs"]["statements_source_status"] == "not_returned"
+    assert body["pscs"]["truncated"] is None
+    assert "active_psc_statements" not in indicator_ids(body)
+
+
+def test_synthetic_description_carries_the_enumeration_identifier(ctx):
+    bundle = synthetic_bundle("active_registered_office_change")
+    items = bundle["responses"]["filing"]["body"]["items"]
+    address = [i for i in items if i["category"] == "address"]
+    assert address
+    for item in address:
+        assert " " not in item["description"]
+        assert item["description"] in SIX_IDENTIFIERS
+    n, routes = synthetic_routes(bundle)
+    ctx.install(routes=routes)
+    got = ctx.body(n)["registered_office_change_filings"]
+    assert got is not None and len(got["items"]) == len(address)
+    assert got["truncated"] is False
+
+
 def test_connect_timeout_is_a_504_and_is_not_retried(ctx):
     up = ctx.install(profile=requests.ConnectTimeout("connect timed out"))
     r = ctx.get()
     assert r.status_code == 504 and r.json() == {"detail": "Upstream timeout."}
     assert up.paths.count(PATHS["profile"]) == 1
+
+
+# ------------------------------------------------------------------ spec v1.2: source status
+
+NOT_RETURNED_NOTICE = (
+    "This register section was not returned. FinCrimeRadar draws no conclusion "
+    "from its absence."
+)
+
+
+def overdue_officers():
+    return officers_with(
+        director(idv={"appointment_verification_statement_due_on": "2026-09-01"})
+    )
+
+
+def overdue_pscs():
+    psc = fixture("psc_list")
+    psc["items"][0]["identity_verification_details"] = {
+        "appointment_verification_statement_due_on": "2026-09-01"
+    }
+    return psc
+
+
+# key, baseline override, indicator that must exist when available and vanish when
+# the collection is not returned
+SOURCE_CASES = [
+    ("officers", {"officers": overdue_officers()}, "idv_statement_overdue"),
+    ("pscs", {"pscs": overdue_pscs()}, "idv_statement_overdue"),
+    ("statements", {}, "active_psc_statements"),
+    ("statements", {}, "ceased_psc_statements"),
+    ("filing", {}, None),
+    ("charges", {}, "outstanding_charges"),
+    ("insolvency", {}, "insolvency_history"),
+]
+
+
+def section_of(body, key):
+    return {
+        "officers": body["officers"]["source_status"],
+        "pscs": body["pscs"]["records_source_status"],
+        "statements": body["pscs"]["statements_source_status"],
+        "filing": body["registered_office_change_filings"]["source_status"],
+        "charges": (body["charges"] or {}).get("source_status"),
+        "insolvency": (body["insolvency"] or {}).get("source_status"),
+    }[key]
+
+
+@pytest.mark.parametrize("key,base,indicator", SOURCE_CASES)
+def test_not_returned_collection_has_null_truncation_and_no_conclusion(
+    ctx, key, base, indicator
+):
+    ctx.install(**base)
+    baseline = ctx.body()
+    assert section_of(baseline, key) == "available"
+    if indicator:
+        assert indicator in indicator_ids(baseline)
+    else:
+        assert baseline["registered_office_change_filings"]["items"]
+
+    kyb.reset_state_for_tests()
+    ctx.install(**{**base, key: (404, {})})
+    body = ctx.body()
+    assert section_of(body, key) == "not_returned"
+    assert body["not_returned_notice"] == NOT_RETURNED_NOTICE
+    if indicator:
+        assert indicator not in indicator_ids(body)
+    truncated = {
+        "officers": body["officers"]["truncated"],
+        "pscs": body["pscs"]["truncated"],
+        "statements": body["pscs"]["truncated"],
+        "filing": body["registered_office_change_filings"]["truncated"],
+    }
+    if key in truncated:
+        assert truncated[key] is None
+    emptied = {
+        "officers": body["officers"]["items"] + body["officers"]["events"],
+        "pscs": body["pscs"]["items"],
+        "statements": body["pscs"]["active_statements"]
+        + body["pscs"]["ceased_statements"],
+        "filing": body["registered_office_change_filings"]["items"],
+    }
+    if key in emptied:
+        assert emptied[key] == []
+
+
+def test_pscs_truncated_is_null_if_either_list_is_missing(ctx):
+    ctx.install(statements=(404, {}))
+    body = ctx.body()
+    assert body["pscs"]["records_source_status"] == "available"
+    assert body["pscs"]["statements_source_status"] == "not_returned"
+    assert body["pscs"]["truncated"] is None
+    kyb.reset_state_for_tests()
+    ctx.install(pscs=(404, {}))
+    assert ctx.body()["pscs"]["truncated"] is None
+
+
+def test_available_sections_keep_boolean_truncation(ctx):
+    ctx.install()
+    body = ctx.body()
+    assert body["officers"]["truncated"] is False
+    assert body["pscs"]["truncated"] is False
+    assert body["registered_office_change_filings"]["truncated"] is False
+    assert body["not_returned_notice"] == NOT_RETURNED_NOTICE
+
+
+def test_optional_resources_are_null_without_a_link_and_statused_with_one(ctx):
+    profile = ctx.profile()
+    del profile["links"]["charges"], profile["links"]["insolvency"]
+    ctx.install(profile=profile)
+    body = ctx.body()
+    assert body["charges"] is None and body["insolvency"] is None
+    kyb.reset_state_for_tests()
+    ctx.install()
+    body = ctx.body()
+    assert body["charges"] == {"source_status": "available"}
+    assert body["insolvency"] == {"source_status": "available"}
+
+
+def test_only_the_profile_404_is_a_404_response(ctx):
+    ctx.install(profile=(404, {}))
+    assert ctx.get().status_code == 404
+
+
+# ------------------------------------------------------------------ spec v1.2: provenance
+
+
+def removed_officers():
+    return officers_with(
+        director(
+            idv={
+                "appointment_verification_start_on": "2026-01-01",
+                "appointment_verification_end_on": "2026-02-01",
+            }
+        )
+    )
+
+
+def removed_pscs():
+    psc = fixture("psc_list")
+    psc["items"][0]["identity_verification_details"] = {
+        "appointment_verification_start_on": "2026-01-01",
+        "appointment_verification_end_on": "2026-02-01",
+    }
+    return psc
+
+
+def endpoints_for(body, indicator_id):
+    return next(i for i in body["indicators"] if i["id"] == indicator_id)[
+        "source_endpoints"
+    ]
+
+
+@pytest.mark.parametrize(
+    "indicator,officers,pscs",
+    [
+        ("idv_statement_overdue", overdue_officers, overdue_pscs),
+        ("idv_statement_removed", removed_officers, removed_pscs),
+    ],
+)
+def test_idv_indicator_provenance_officer_only_psc_only_and_mixed(
+    ctx, indicator, officers, pscs
+):
+    quiet_pscs = fixture("psc_list")
+    quiet_officers = officers_with()
+
+    ctx.install(officers=officers(), pscs=quiet_pscs)
+    assert endpoints_for(ctx.body(), indicator) == ["officers"]
+
+    kyb.reset_state_for_tests()
+    ctx.install(officers=quiet_officers, pscs=pscs())
+    assert endpoints_for(ctx.body(), indicator) == ["pscs"]
+
+    kyb.reset_state_for_tests()
+    ctx.install(officers=officers(), pscs=pscs())
+    assert endpoints_for(ctx.body(), indicator) == ["officers", "pscs"]
+
+
+# ------------------------------------------------------------------ spec v1.2: client allowance
+
+
+def install_any(ctx):
+    """Serve the default fixtures for any company number. Returns the call list."""
+    prefix = f"/company/{NUM}"
+    by_suffix = {p[len(prefix) :]: v for p, v in default_routes().items()}
+    calls = []
+
+    def fake(url, params, auth, timeout):
+        path = url[len(kyb.UPSTREAM_BASE) :]
+        calls.append(path)
+        m = re.fullmatch(r"/company/([A-Z0-9]{8})(/.*)?", path)
+        result = by_suffix.get(m.group(2) or "", (404, {}))
+        status, body = result if isinstance(result, tuple) else (200, result)
+        return FakeResponse(status, copy.deepcopy(body))
+
+    ctx.monkeypatch.setattr(kyb, "_http_get", fake)
+    return calls
+
+
+CLIENT_A = {"X-Forwarded-For": "198.51.100.10"}
+CLIENT_B = {"X-Forwarded-For": "198.51.100.11"}
+
+
+def test_client_is_charged_by_upstream_calls_actually_made(ctx):
+    install_any(ctx)
+    assert ctx.get(headers=CLIENT_A).status_code == 200
+    assert len(kyb._client_calls["198.51.100.10"]) == 7
+    # A cache hit makes no upstream call, so it costs nothing.
+    assert ctx.get(headers=CLIENT_A).status_code == 200
+    assert len(kyb._client_calls["198.51.100.10"]) == 7
+
+
+def test_unlinked_company_costs_fewer_calls(ctx):
+    profile = ctx.profile()
+    del profile["links"]["charges"], profile["links"]["insolvency"]
+    ctx.install(profile=profile)
+    ctx.get(headers=CLIENT_A)
+    assert len(kyb._client_calls["198.51.100.10"]) == 5
+
+
+def test_one_client_cannot_drain_more_than_60_upstream_calls(ctx, monkeypatch):
+    assert kyb.CLIENT_ALLOWANCE_MAX == 60 and kyb.CLIENT_ALLOWANCE_WINDOW_SECONDS == 300
+    monkeypatch.setattr(kyb, "IP_LIMIT_MAX", 1000)  # isolate the allowance
+    calls = install_any(ctx)
+    statuses = [
+        ctx.get(f"ZZ{i:06d}", headers=CLIENT_A).status_code for i in range(1, 30)
+    ]
+    assert statuses[:8] == [200] * 8
+    assert 429 in statuses and 200 not in statuses[statuses.index(429) :]
+    assert len(calls) == 60
+    assert kyb.quota_remaining() == kyb.UPSTREAM_BUDGET_MAX - 60
+    r = ctx.get("ZZ000099", headers=CLIENT_A)
+    assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0
+    # Other clients and the global pool are untouched.
+    assert ctx.get("ZZ000098", headers=CLIENT_B).status_code == 200
+
+
+def test_allowance_window_rolls(ctx, monkeypatch):
+    clock = {"t": 100.0}
+    monkeypatch.setattr(kyb, "_monotonic", lambda: clock["t"])
+    monkeypatch.setattr(kyb, "IP_LIMIT_MAX", 1000)
+    monkeypatch.setattr(kyb, "CLIENT_ALLOWANCE_MAX", 7)
+    install_any(ctx)
+    assert ctx.get("ZZ000001", headers=CLIENT_A).status_code == 200
+    assert ctx.get("ZZ000002", headers=CLIENT_A).status_code == 429
+    clock["t"] += kyb.CLIENT_ALLOWANCE_WINDOW_SECONDS + 1
+    assert ctx.get("ZZ000002", headers=CLIENT_A).status_code == 200
+
+
+def test_burst_cap_of_ten_lookups_per_minute_is_kept(ctx):
+    assert kyb.IP_LIMIT_MAX == 10 and kyb.IP_LIMIT_WINDOW_SECONDS == 60
+    install_any(ctx)
+    for _ in range(10):
+        assert ctx.get(headers=CLIENT_A).status_code == 200
+    assert ctx.get(headers=CLIENT_A).status_code == 429
+
+
+# ------------------------------------------------------------------ spec v1.2: client IP
+
+
+def test_cf_connecting_ip_takes_precedence_over_x_forwarded_for(ctx):
+    install_any(ctx)
+    for i in range(10):
+        headers = {
+            "CF-Connecting-IP": "203.0.113.50",
+            "X-Forwarded-For": f"192.0.2.{i}",
+        }
+        assert ctx.get(headers=headers).status_code == 200
+    headers = {"CF-Connecting-IP": "203.0.113.50", "X-Forwarded-For": "192.0.2.99"}
+    assert ctx.get(headers=headers).status_code == 429
+    # A different CF-Connecting-IP is a different client.
+    headers = {"CF-Connecting-IP": "203.0.113.51", "X-Forwarded-For": "192.0.2.99"}
+    assert ctx.get(headers=headers).status_code == 200
+
+
+def test_without_cf_connecting_ip_the_nth_from_right_rule_still_applies(ctx):
+    install_any(ctx)
+    for i in range(10):
+        r = ctx.get(headers={"X-Forwarded-For": f"192.0.2.{i}, 198.51.100.60"})
+        assert r.status_code == 200
+    r = ctx.get(headers={"X-Forwarded-For": "192.0.2.77, 198.51.100.60"})
+    assert r.status_code == 429
+
+
+# ------------------------------------------------------------------ spec v1.2: bounded limiter
+
+
+def test_limiters_stay_bounded_under_20000_distinct_keys(monkeypatch):
+    kyb.reset_state_for_tests()
+    monkeypatch.setattr(kyb, "UPSTREAM_BUDGET_MAX", 10**9)
+    assert kyb.LIMITER_MAX_KEYS == 10_000
+    for i in range(20_000):
+        kyb._ip_limited(f"k{i}")
+        kyb._take_budget(f"k{i}")
+    assert len(kyb._ip_log) <= kyb.LIMITER_MAX_KEYS
+    assert len(kyb._client_calls) <= kyb.LIMITER_MAX_KEYS
+    # Oldest evicted, newest kept.
+    assert "k0" not in kyb._ip_log and "k19999" in kyb._ip_log
+    kyb.reset_state_for_tests()
+
+
+def test_recently_used_key_survives_eviction(monkeypatch):
+    kyb.reset_state_for_tests()
+    monkeypatch.setattr(kyb, "LIMITER_MAX_KEYS", 3)
+    for k in ("a", "b", "c"):
+        kyb._ip_limited(k)
+    kyb._ip_limited("a")
+    kyb._ip_limited("d")
+    assert list(kyb._ip_log) == ["c", "a", "d"]
+    kyb.reset_state_for_tests()
+
+
+# ------------------------------------------------------------------ spec v1.2: unparseable dates
+
+IDV_DATE_FIELDS = [
+    "appointment_verification_start_on",
+    "appointment_verification_end_on",
+    "appointment_verification_statement_due_on",
+    "appointment_verification_statement_date",
+]
+
+
+@pytest.mark.parametrize("field", IDV_DATE_FIELDS)
+@pytest.mark.parametrize(
+    "bad", ["not-a-date", "2026-13-01", "2026-02-30", "11/10/2026"]
+)
+def test_unparseable_date_in_each_field_is_a_conflict_for_a_psc(field, bad):
+    d = UpIdv(**{field: bad})
+    assert (
+        derive_idv_status(d, is_psc=True, today=TODAY) == "verification_data_conflict"
+    )
+
+
+@pytest.mark.parametrize("field", IDV_DATE_FIELDS[:3])
+def test_unparseable_date_is_a_conflict_for_an_officer(field):
+    d = UpIdv(**{field: "garbage"})
+    assert (
+        derive_idv_status(d, is_psc=False, today=TODAY) == "verification_data_conflict"
+    )
+
+
+@pytest.mark.parametrize("field", IDV_DATE_FIELDS)
+def test_unparseable_date_reaches_the_response_as_a_conflict_not_an_error(ctx, field):
+    psc = fixture("psc_list")
+    psc["items"][0]["identity_verification_details"] = {field: "garbage"}
+    ctx.install(pscs=psc)
+    body = ctx.body()
+    assert body["pscs"]["items"][0]["identity_verification"]["status"] == (
+        "verification_data_conflict"
+    )
+
+
+# ------------------------------------------------------------------ spec v1.2: indicator strings
+
+NINE_DOES_NOT_ESTABLISH = {
+    "accounts_overdue": "A register flag that accounts are overdue does not establish the reason, whether the company is trading, or any wrongdoing.",
+    "confirmation_statement_overdue": "A register flag that a confirmation statement is overdue does not establish the reason, whether the company is trading, or any wrongdoing.",
+    "idv_statement_overdue": "A register record that a statement is overdue is not a finding that the person is unverified or that an offence has occurred.",
+    "idv_statement_removed": "A removed statement record does not establish why it was removed or the person's current verification position.",
+    "active_psc_statements": "A PSC statement records what the company told the register. It does not establish who owns or controls the company or that the statement is accurate.",
+    "ceased_psc_statements": "A ceased statement is a historical register record. It does not establish the current position or that the statement was accurate.",
+    "previous_names": "A previous name is a register record. It does not establish why the name changed.",
+    "insolvency_history": "An insolvency record does not establish current solvency, cause or outcome.",
+    "outstanding_charges": "The register status of a charge does not establish the amount secured, the value of the assets or the company's ability to pay.",
+}
+
+
+def test_all_nine_indicator_does_not_establish_strings_are_exact(ctx):
+    profile = ctx.profile()
+    profile["accounts"]["next_accounts"]["overdue"] = True
+    profile["confirmation_statement"]["overdue"] = True
+    profile["previous_company_names"] = [
+        {
+            "name": "OLD NAME LIMITED",
+            "effective_from": "2019-01-01",
+            "ceased_on": "2020-01-01",
+        }
+    ]
+    officers = officers_with(*overdue_officers()["items"], *removed_officers()["items"])
+    ctx.install(profile=profile, officers=officers)
+    got = {i["id"]: i["does_not_establish"] for i in ctx.body()["indicators"]}
+    assert got == NINE_DOES_NOT_ESTABLISH
+
+
+# ------------------------------------------------------------------ spec v1.2: personal fields on every path
+
+PII_MARKERS = ("PII_", "evil.example")
+PERSONAL_KEYS = FORBIDDEN_KEYS - {"links"}
+
+
+def assert_no_personal(payload, where):
+    """One recursive assertion for every response path, header and log record."""
+    if isinstance(payload, str):
+        for marker in PII_MARKERS:
+            assert marker not in payload, where
+        try:
+            parsed = json.loads(payload)
+        except ValueError:
+            return
+        payload = parsed
+    assert not PERSONAL_KEYS & set(walk_keys(payload)), where
+    text = json.dumps(payload)
+    for marker in PII_MARKERS:
+        assert marker not in text, where
+
+
+def hostile(status):
+    return (
+        status,
+        {"error": "PII_UPSTREAM_ERROR_BODY", "links": {"x": "http://evil.example"}},
+    )
+
+
+def log_records(out):
+    return [
+        json.loads(line[len("kyb_lookup ") :])
+        for line in out.splitlines()
+        if line.startswith("kyb_lookup ")
+    ]
+
+
+ERROR_PATHS = [
+    ("success", 200, {}),
+    ("profile_404", 404, {"profile": hostile(404)}),
+    ("upstream_500", 502, {"profile": hostile(500)}),
+    ("upstream_auth", 503, {"profile": hostile(401)}),
+    ("upstream_429", 503, {"profile": hostile(429)}),
+    ("upstream_timeout", 504, {"profile": requests.Timeout("PII_TIMEOUT")}),
+    ("upstream_conn", 502, {"profile": requests.ConnectionError("PII_CONN")}),
+    ("bad_json_shape", 502, {"officers": (200, {"items": "PII_NOT_A_LIST"})}),
+]
+
+
+@pytest.mark.parametrize("name,status,over", ERROR_PATHS)
+def test_no_personal_data_on_any_upstream_path_or_log(ctx, capsys, name, status, over):
+    ctx.install(**over)
+    r = ctx.get()
+    assert r.status_code == status, r.text
+    assert_no_personal(r.text, name)
+    assert_no_personal(dict(r.headers), name)
+    records = log_records(capsys.readouterr().out)
+    assert records, "a log record is written for every request"
+    for rec in records:
+        assert_no_personal(rec, name)
+
+
+def test_no_personal_data_on_local_error_paths_and_logs(ctx, capsys, monkeypatch):
+    install_any(ctx)
+    cases = []
+    cases.append(("invalid", ctx.get("PII_BAD;DROP")))
+    monkeypatch.setattr(kyb, "COMPANIES_HOUSE_API_KEY", "")
+    cases.append(("not_configured", ctx.get()))
+    monkeypatch.setattr(kyb, "COMPANIES_HOUSE_API_KEY", TEST_KEY)
+    monkeypatch.setattr(kyb, "CLIENT_ALLOWANCE_MAX", 1)
+    cases.append(("allowance", ctx.get("ZZ000011", headers=CLIENT_A)))
+    cases.append(("allowance_blocked", ctx.get("ZZ000012", headers=CLIENT_A)))
+    monkeypatch.setattr(kyb, "CLIENT_ALLOWANCE_MAX", 60)
+    monkeypatch.setattr(kyb, "IP_LIMIT_MAX", 1)
+    ctx.get("ZZ000013", headers=CLIENT_B)
+    cases.append(("ip_limit", ctx.get("ZZ000014", headers=CLIENT_B)))
+    assert [c[1].status_code for c in cases] == [422, 503, 429, 429, 429]
+    for name, r in cases:
+        assert_no_personal(r.text, name)
+        assert_no_personal(dict(r.headers), name)
+    for rec in log_records(capsys.readouterr().out):
+        assert_no_personal(rec, "log")
+
+
+def test_no_personal_data_in_health(ctx):
+    import main
+
+    install_any(ctx)
+    ctx.get(headers=CLIENT_A)
+    r = TestClient(main.app).get("/api/health")
+    assert r.status_code == 200
+    assert_no_personal(r.text, "health")
+
+
+# ------------------------------------------------------------------ spec v1.2: synthetic fixtures
+
+COMPANY_NUMBER = re.compile(r"^ZZ\d{6}$")
+PATH_NUMBER = re.compile(r"/company/([A-Za-z0-9]+)")
+
+
+def fixture_company_numbers(obj):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "company_number" and isinstance(v, str):
+                yield v
+            yield from fixture_company_numbers(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from fixture_company_numbers(v)
+    elif isinstance(obj, str):
+        yield from PATH_NUMBER.findall(obj)
+
+
+def test_every_fixture_company_number_is_a_reserved_synthetic_number():
+    seen = 0
+    for path in sorted(FIXTURES.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for number in fixture_company_numbers(data):
+            seen += 1
+            assert COMPANY_NUMBER.fullmatch(number), path.name
+    assert seen >= 4
+
+
+def test_synthetic_bundles_are_marked_and_distinct():
+    numbers = []
+    for label in SYNTHETIC:
+        bundle = synthetic_bundle(label)
+        assert bundle["synthetic"] is True and "captured" not in bundle
+        numbers.append(bundle["company_number"])
+    assert len(set(numbers)) == len(SYNTHETIC)
+
+
+def test_no_live_named_fixture_files_remain():
+    assert not list(FIXTURES.glob("live_*.json"))
+
+
+def test_synthetic_bundles_carry_no_register_free_text():
+    for label in SYNTHETIC:
+        text = (FIXTURES / f"synthetic_{label}.json").read_text(encoding="utf-8")
+        for m in re.finditer(r'"(?:name|company_name)": "([^"]*)"', text):
+            assert re.fullmatch(
+                r"(PERSON|ENTITY|CHARGEE) [A-Z]|SYNTHETIC [A-Z0-9 ]+", m.group(1)
+            ), m.group(1)
+        assert not re.search(
+            r"\b[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}\b", text.replace("REDACTED", "")
+        )

@@ -1,6 +1,6 @@
 {
   "company_name": "EXAMPLE TRADING LIMITED",
-  "company_number": "12345678",
+  "company_number": "ZZ000001",
   "company_status": "active",
   "type": "ltd",
   "jurisdiction": "england-wales",
@@ -35,11 +35,11 @@
     "62020"
   ],
   "links": {
-    "self": "/company/12345678",
-    "officers": "/company/12345678/officers",
-    "persons_with_significant_control": "/company/12345678/persons-with-significant-control",
-    "filing_history": "/company/12345678/filing-history",
-    "charges": "/company/12345678/charges",
-    "insolvency": "/company/12345678/insolvency"
+    "self": "/company/ZZ000001",
+    "officers": "/company/ZZ000001/officers",
+    "persons_with_significant_control": "/company/ZZ000001/persons-with-significant-control",
+    "filing_history": "/company/ZZ000001/filing-history",
+    "charges": "/company/ZZ000001/charges",
+    "insolvency": "/company/ZZ000001/insolvency"
   }
 }

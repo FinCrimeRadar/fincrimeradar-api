@@ -6,7 +6,9 @@ the RIGHT instead, where N is the number of trusted proxies that append to the
 header (TRUSTED_PROXY_HOPS, default 1 for Render). Entries to the left of that
 point are caller controlled and ignored.
 
-Spec: docs/specs/kyb-lab-api-spec.md, "Quota and abuse protection", item 3.
+Spec: docs/specs/kyb-lab-api-spec.md, "Quota and abuse protection", item 3a.
+
+CF-Connecting-IP wins when present (v1.2).
 """
 
 import os
@@ -32,6 +34,12 @@ def trusted_proxy_hops() -> int:
 
 
 def client_ip(request: Request) -> str:
+    # Spec v1.2: Render fronts the service with Cloudflare, which overwrites
+    # CF-Connecting-IP. Without Cloudflare in front a caller could set it, so
+    # this header must be ignored in any deployment that is not behind it.
+    cf = request.headers.get("cf-connecting-ip", "").strip()
+    if cf:
+        return cf
     hops = trusted_proxy_hops()
     header = request.headers.get("x-forwarded-for", "")
     if hops > 0 and header:
