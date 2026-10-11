@@ -138,9 +138,16 @@ def normalise_search_text(raw: Any) -> str | None:
 # ---------------------------------------------------------------- cache
 
 
+def _purge_expired(now: float) -> None:
+    """Drop every expired entry. Caller holds the lock. At most 1,000 entries."""
+    for key in [k for k, (expires, _) in _cache.items() if expires <= now]:
+        del _cache[key]
+
+
 def _cache_get(key: str) -> dict | None:
     now = kyb._monotonic()
     with _cache_lock:
+        _purge_expired(now)
         hit = _cache.get(key)
         if hit is None:
             return None
@@ -154,6 +161,7 @@ def _cache_get(key: str) -> dict | None:
 def _cache_put(key: str, body: dict) -> None:
     now = kyb._monotonic()
     with _cache_lock:
+        _purge_expired(now)
         _cache[key] = (now + CACHE_TTL_SECONDS, body)
         _cache.move_to_end(key)
         while len(_cache) > CACHE_MAX_ENTRIES:
@@ -280,17 +288,42 @@ def _generic(status: int, detail: str, headers: dict | None = None) -> JSONRespo
     return JSONResponse({"detail": detail}, status_code=status, headers=headers)
 
 
+async def _read_bounded(request: Request) -> bytes | None:
+    """The request body, or None if it passes BODY_LIMIT_BYTES.
+
+    SearchGuard has normally bounded the body already; this is an independent
+    bound so the handler never reads an unbounded stream if the guard does not
+    match the path (for example behind a root path).
+    """
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > BODY_LIMIT_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.post(SEARCH_PATH)
 async def kyb_search(request: Request):
     request_id = uuid.uuid4().hex[:12]
     ip = client_ip(request)
     call = kyb._Call(ip)
-    # The body was already bounded and received by SearchGuard (at most 4096 bytes).
-    raw_body = await request.body()
-    try:
-        payload = json.loads(raw_body)
-    except ValueError:
-        payload = None
+    raw_body = await _read_bounded(request)
+    if raw_body is None:
+        _log(request_id, "body_too_large", None, call, "n/a")
+        return _generic(413, DETAIL_TOO_LARGE)
+    # Only a JSON request is parsed: a cross site simple request (text/plain, a form
+    # post) is rejected here, before any quota is touched, and the body is decoded as
+    # strict UTF-8 (json.loads on bytes would also accept UTF-16 and UTF-32).
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    payload = None
+    if media_type == "application/json":
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except ValueError:
+            payload = None
     text = None
     if isinstance(payload, dict) and set(payload) == {"q"}:
         text = normalise_search_text(payload["q"])
@@ -402,6 +435,7 @@ class SearchGuard:
             await reject(408, DETAIL_TIMEOUT, "body_timeout")
             return
         if disconnected:
+            _log(request_id, "client_disconnected", None, call, "n/a")
             return
 
         body = b"".join(chunks)

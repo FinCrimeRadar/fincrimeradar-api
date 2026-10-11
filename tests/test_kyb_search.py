@@ -205,7 +205,8 @@ async def asgi(
     path=PATH,
 ):
     """Drive main.app directly so the body can be declared, understated, chunked or slow."""
-    hdrs = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    headers = {"content-type": "application/json", **(headers or {})}
+    hdrs = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
     scope = {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -971,3 +972,95 @@ def test_17d_control_responses_for_an_allowed_origin_carry_allow_origin(
     for (status, headers, _), expected in cases:
         assert status == expected, (status, expected)
         assert headers.get("access-control-allow-origin") == ORIGIN, expected
+
+
+# ------------------------------------------------------------------ review findings of PR 7
+
+
+def test_expired_entries_are_purged_on_the_next_cache_access(client, up, monkeypatch):
+    up()
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(kyb, "_monotonic", lambda: clock["t"])
+    post(client, "Acme")
+    assert set(ks._cache) == {"Acme"}
+    clock["t"] += ks.CACHE_TTL_SECONDS + 1
+    post(
+        client, "Other term"
+    )  # a different key: the expired term must not stay in memory
+    assert set(ks._cache) == {"Other term"}
+
+
+def test_only_application_json_is_parsed(client, up):
+    upstream = up()
+    for ctype in (
+        None,
+        "text/plain",
+        "application/x-www-form-urlencoded",
+        "multipart/form-data",
+    ):
+        headers = {"Content-Type": ctype} if ctype else {}
+        r = client.post(PATH, content=VALID_BODY, headers=headers)
+        assert r.status_code == 422 and r.json() == {"detail": ks.DETAIL_INVALID}, ctype
+    assert (
+        upstream.calls == []
+        and not kyb._client_calls
+        and not kyb._budget
+        and not ks._cache
+    )
+    ok = client.post(
+        PATH,
+        content=VALID_BODY,
+        headers={"Content-Type": "Application/JSON; charset=utf-8"},
+    )
+    assert ok.status_code == 200 and len(upstream.calls) == 1
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-32"])
+def test_the_body_must_be_strict_utf_8(client, up, encoding):
+    upstream = up()
+    body = '{"q":"Acme Ltd"}'.encode(encoding)
+    r = client.post(PATH, content=body, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422 and upstream.calls == []
+
+
+def test_the_handler_bounds_the_body_even_without_the_guard(monkeypatch):
+    from fastapi import FastAPI
+
+    bare = FastAPI()
+    bare.include_router(ks.router)
+    upstream = Upstream(good())
+    monkeypatch.setattr(kyb, "_http_get", upstream)
+    r = TestClient(bare).post(
+        PATH, content=b"x" * 5000, headers={"Content-Type": "application/json"}
+    )
+    assert r.status_code == 413 and r.json() == {"detail": ks.DETAIL_TOO_LARGE}
+    assert upstream.calls == [] and not ks._cache
+
+
+def test_a_disconnect_while_the_body_is_read_is_logged_and_charges_nothing(up, capsys):
+    upstream = up()
+    sent = []
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": PATH,
+        "raw_path": PATH.encode(),
+        "query_string": b"",
+        "headers": [(b"content-type", b"application/json")],
+        "client": (ASGI_CLIENT, 1),
+        "server": ("test", 443),
+    }
+    run(main.app(scope, receive, send))
+    assert sent == []
+    assert "client_disconnected" in capsys.readouterr().out
+    _nothing_but_burst(upstream)
