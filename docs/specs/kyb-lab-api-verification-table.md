@@ -141,3 +141,19 @@ Method: authenticated calls to the live Public Data API from a local run, roughl
 | `/persons-with-significant-control-statements` when none exist | 404, for all 3 captured companies. Handled as an empty list. | 3 companies |
 | `X-Ratelimit-*` response headers | `X-Ratelimit-Limit` (600), `X-Ratelimit-Remain` (counts down per request), `X-Ratelimit-Reset` (epoch seconds), `X-Ratelimit-Window` (`5m`). They are logged only and never used for control. | all calls |
 | Filing history total versus returned | At least one sampled company had `total_count` above the 100 returned, so the truncation flag added in v1.1 matches a real case. | 30 companies |
+
+## Company name search (11 October 2026, for spec section 14)
+
+Checked against `spec/search.json` (vendored) and the developer specs pages named in spec section 14.2. No live Companies House call.
+
+| Question | Result | Path or page |
+| --- | --- | --- |
+| Endpoint path | `GET /search/companies` (host `api.company-information.service.gov.uk`). The vendored file keys it as operation `searchCompanies` and does not state the path. | developer reference page |
+| Parameters | `q` (required string), `items_per_page` (integer), `start_index` (integer), `restrictions` (string). No default, minimum or maximum is stated for any of them. | `search.json#/searchCompanies/get/parameters` |
+| Response fields used | `items[].company_number`, `items[].title`, `items[].company_status`, `items[].company_type`, `items[].date_of_creation`. All five are listed as required. | `search.json#/definitions/CompanySearchItems`, `CommonSearchItems/properties/title` |
+| Response fields dropped | `items[].address`, `address_snippet`, `snippet`, `description`, `description_identifier`, `matches`, `links`, `date_of_cessation`, `kind`; envelope `etag`, `kind`. | same |
+| Envelope counts | `total_results` (described as "further" results, ambiguous), `start_index`, `items_per_page`. No `page_number`. | `search.json#/definitions/CommonSearch` |
+| `company_status` enum | active, dissolved, liquidation, receivership, administration, voluntary-arrangement, converted-closed, insolvency-proceedings, registered, removed (10). | `CompanySearchItems/properties/company_status/enum` |
+| `company_type` enum | 26 values in the vendored file, 23 stated on the developer resource page. Inconsistent; the allowlist of section 3 is used by membership only. | `CompanySearchItems/properties/company_type/enum` |
+| Documented limits | None. Forum users (not Companies House staff) report default 20, maximum 100 and a 1000 result ceiling with HTTP 416; none confirmed by Companies House. | spec 14.2 item 1 |
+| Not documented | sort order, minimum and maximum `q` length, matching rule, whether a company number can be searched, the shape of a no match result. | spec 14.2 items 2 to 5 |

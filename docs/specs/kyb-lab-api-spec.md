@@ -1,6 +1,6 @@
 # Companies House KYB Investigation Lab: API phase 1 specification
 
-Status: v1.8, Codex post-merge review PASSED 11 Oct 2026. v1.4: v1.3 withdrawn per Codex PR review 2 (404 not documented as empty); revisit only with Companies House documentation. Base: FROZEN v1.0 (Codex section 7 review PASSED, reviews 1 to 3), v1.1 filing truncation, the v1.2 remediation of Codex PR review 1 (`kyb-lab-codex-pr-review-1.md`), and the v1.4 remediation of Codex PR review 2 (`kyb-lab-codex-pr-review-2.md`). Any spec change needs a new review.
+Status: v1.8, Codex post-merge review PASSED 11 Oct 2026. v1.9 DRAFT (section 14, company name search, spec only, no code) is pending the Codex spec review; nothing outside section 14 and the change log changed. v1.4: v1.3 withdrawn per Codex PR review 2 (404 not documented as empty); revisit only with Companies House documentation. Base: FROZEN v1.0 (Codex section 7 review PASSED, reviews 1 to 3), v1.1 filing truncation, the v1.2 remediation of Codex PR review 1 (`kyb-lab-codex-pr-review-1.md`), and the v1.4 remediation of Codex PR review 2 (`kyb-lab-codex-pr-review-2.md`). Any spec change needs a new review.
 Author: Claude (chat), 10 October 2026. Implementation owner: Claude Code. Independent review: Codex, outside Claude Code.
 Tier: CLAUDE.md section 15 high stakes (new API endpoint, trust boundary, third party data, personal data).
 
@@ -391,6 +391,126 @@ v1.5 (11 October 2026): client key validation (section 3 item 3a, section 8 item
 v1.6 (11 October 2026): client key normalisation (section 3 item 3a, section 8 item 21). IPv4-mapped IPv6 keys as IPv4, other IPv6 by /64 prefix, including the socket fallback, so a caller cannot rotate keys inside one address block. Pending Codex re-review.
 v1.7 (11 October 2026): test procedure only, no logic change. Section 9 step 5 rewritten to match production: forged `CF-Connecting-IP` is rejected by Cloudflare with 403 (error 1000), `X-Forwarded-For` rotation creates no new keys, a separate egress IP succeeds. Evidence recorded from the 11 October production run. For the combined Codex review on 18 October 2026.
 v1.8 (11 October 2026): one derivation rule. In section 5.2 an `appointment_verification_end_on` that is exactly the raw string `9999-12-31` and has a start date is treated as absent before the conflict checks, for officers and PSCs; with no start date it stays a conflict, and every other future end date stays a conflict. Evidence: the live API response (10 directors classified as conflicts) and the register's own officers page (section 2). Companies House does not document the value in its API specification. Tests: section 8 item 29. For the 18 October Codex review.
+v1.9 DRAFT (11 October 2026): new section 14, company name search (`GET /api/kyb/search?q=`): one upstream `/search/companies` call with `items_per_page=20` and no paging, five candidate fields plus a scope flag, shared quota, burst and a short cache. Spec only; person or officer name search is out of scope and must not be built. Pending the Codex spec review.
+
+## 14. Company name search (v1.9 DRAFT, spec only, no code)
+
+Status: draft for the Codex spec review. Nothing in this section is implemented. Tier: CLAUDE.md section 15 (new API endpoint, untrusted third party text, quota and abuse surface).
+
+### 14.1 Purpose and scope
+
+A visitor who does not know a company number types part of a company name, sees a short list of candidate companies, picks one, and the existing `GET /api/kyb/company/{company_number}` readout runs unchanged. The search returns candidates only. It never returns a readout, an indicator or a verification status.
+
+Out of scope, and not to be built: **person or officer name search** (UK GDPR and people dossier risk), PSC search, disqualified officer search, the combined search (`/search`), advanced and dissolved company search, address search, fuzzy or phonetic matching of our own, paging, the `restrictions` parameter (including the name availability search), and any search by individual. The service must never call any search path other than `/search/companies`, and never with a person's name supplied as the intent of the feature.
+
+### 14.2 Verified source facts (read 11 October 2026)
+
+Sources: the vendored `docs/specs/companies-house-swagger/spec/search.json` (operation `searchCompanies`, definitions `CompanySearch`, `CompanySearchItems`, `CommonSearch`, `CommonSearchItems`, `registeredOfficeAddress`, `MatchesModel`, `LinksModel`), the developer reference https://developer-specs.company-information.service.gov.uk/companies-house-public-data-api/reference/search/search-companies and the resource page https://developer-specs.company-information.service.gov.uk/companies-house-public-data-api/resources/companysearch?v=latest. No live Companies House call was made for this section (the API key exists only on Render).
+
+| Fact | Where it is documented |
+| --- | --- |
+| `GET https://api.company-information.service.gov.uk/search/companies`. The vendored file keys the operation by name (`searchCompanies`) and does not state the path; the path is from the developer reference page. | developer reference |
+| Query parameters: `q` (string, required, "The term being searched for."), `items_per_page` (integer, "The number of search results to return per page."), `start_index` (integer, "The index of the first result item to return."), `restrictions` (string, space separated enumerable options). Responses: 200 "Search company", 401 "Not authorised". | `search.json#/searchCompanies/get/parameters`, `#/responses` |
+| Envelope: `kind` (`search#companies`), `items` (array), `total_results` (integer, "The number of further search results available for the current search."), `start_index`, `items_per_page`, `etag`. There is no `page_number`. | `search.json#/definitions/CompanySearch`, `#/definitions/CommonSearch` |
+| Item fields this spec would use: `company_number` (string, "The company registration / incorporation number of the company."), `title` (string, "The title of the search result."), `company_status` (string enum: active, dissolved, liquidation, receivership, administration, voluntary-arrangement, converted-closed, insolvency-proceedings, registered, removed), `company_type` (string enum of 26 values in the vendored file), `date_of_creation` (string, format date, "The date the company was created."). All five are in the schema `required` list. | `search.json#/definitions/CompanySearchItems/properties` and `/required`, `#/definitions/CommonSearchItems/properties/title` |
+| Item fields this spec drops: `address` (registered office address object), `address_snippet`, `snippet`, `description`, `description_identifier`, `matches`, `links` (including `self`, which must never be followed), `date_of_cessation`, `kind`. | same |
+| The existing upstream rules still apply to the search call: fixed host, no redirects, no link following, key based authorisation, and the 600 per five minute application rate limit (a search counts against the same limit). | section 3 and section 2 |
+
+**Undocumented or inconsistent, so not relied on:**
+
+1. Default `items_per_page`, maximum `items_per_page`, and maximum `start_index`: not stated by Companies House. A non staff forum user (voracityemail, 7 November 2025, https://forum.companieshouse.gov.uk/t/using-pagination-on-search-companies/12373) reports a default of 20, a maximum of 100 and a 1000 result ceiling with HTTP 416 beyond it, and says they could not find a Companies House post confirming it; another user (madski, 30 January 2020, https://forum.companieshouse.gov.uk/t/api-company-search-limitation/2824) reports an error past the 1000th result. **Treatment:** always send an explicit `items_per_page=20`, never send `start_index`, and never depend on the reported default or ceiling.
+2. Sort order and relevance: not stated. **Treatment:** show candidates in the order returned and make no claim about ranking or best match.
+3. Minimum and maximum `q` length, and the matching rule (prefix, token, fuzzy): not stated. **Treatment:** the 2 to 160 character bounds in 14.3 are this service's own, not Companies House's, and no user facing text describes how matching works.
+4. Whether a company number can be searched through `q`: not stated. **Treatment:** the service does not special case digits; the page keeps the company number form beside the name form.
+5. The result shape for no matches (empty `items`, absent `items`, or a 404): not stated. **Treatment:** a 200 with an absent or empty `items` is zero candidates; a 404 is an unexpected upstream status and gives 502, never an empty list (the lesson of Codex PR review 2: an undocumented status is not evidence of absence).
+6. `total_results`: the description says "further" results, which is ambiguous between the whole result count and the count beyond this page. **Treatment:** `truncated` is true if `total_results` is an integer larger than the number of items returned, or if the page came back full (20 items). It is a hint that more companies may match, never a count shown to the reader.
+7. `company_type` enum: 26 values in the vendored Swagger, while the developer resource page text lists 23. **Treatment:** the value is passed through as a bounded string and compared with the 8 type allowlist of section 3; an unknown value is simply "outside the allowlist".
+8. How a name search is rate limited separately from other calls: not stated. **Treatment:** one search is one upstream call against the shared 600 per five minute budget.
+
+### 14.3 Endpoint and input
+
+`GET /api/kyb/search?q=<text>`. No other query parameter is read. A client supplied `start_index`, `items_per_page`, `page`, `restrictions` or any other name is ignored and never forwarded.
+
+1. Take `q`, strip leading and trailing whitespace, and collapse internal runs of spaces to a single space.
+2. Reject (422, a generic message, nothing echoed) unless the result is 2 to 160 characters long (code points) and `q.isprintable()` is true. That rejects every control, line separator, zero width and bidirectional control character and a tab or newline, and accepts ordinary letters of any script, digits, spaces and punctuation.
+3. The raw text is never logged. The structured log line carries `query_length` (the stripped length), the outcome, the upstream call count and the cache result, and nothing derived from the text (no hash).
+4. Missing `COMPANIES_HOUSE_API_KEY`: 503 with the existing generic message, exactly as the company lookup.
+
+### 14.4 Upstream call
+
+Exactly one call per cache miss: `GET /search/companies?q=<stripped text>&items_per_page=20`. No `start_index`, no `restrictions`, no retry on a successful status, and the existing connection error retry rule applies unchanged. The request goes through the same `_fetch` as every other call, so the fixed host, no redirect, timeout, 429 block and per call quota charging all apply.
+
+Status mapping is the company lookup mapping with one difference: the lookup's 404 handling (not found, or `not_returned` for a sub resource) does not apply, and a 404 here gives 502. 200 parse; 401 or 403 gives 503; 429 starts the 300 second block and gives 429 with `Retry-After`; any other status gives 502; a timeout gives 504. A 200 body that does not parse into the upstream model gives 502.
+
+### 14.5 Response
+
+```
+{
+  "retrieved_at": "ISO 8601 UTC",
+  "source": "Companies House Public Data API",
+  "candidates": [ Candidate ],
+  "truncated": bool,
+  "search_notice": "string, fixed",
+  "attribution": "Source: Companies House public register, retrieved <retrieved_at>. FinCrimeRadar is not affiliated with or endorsed by Companies House."
+}
+
+Candidate = {
+  "company_number": "^[A-Z0-9]{8}$",
+  "title": "string, at most 500 characters",
+  "company_status": "string | null",
+  "company_type": "string | null",
+  "date_of_creation": "string | null",
+  "scope": "interpreted" | "unsupported_entity_type"
+}
+```
+
+1. At most 20 candidates, in the order returned. If the upstream returns more, the extra items are dropped and `truncated` is true.
+2. Only these six keys exist on a candidate. The response models are strict with `extra="forbid"`, and the upstream model never declares `address`, `address_snippet`, `snippet`, `description`, `description_identifier`, `matches`, `links`, `date_of_cessation`, `kind` or `etag`, so they cannot reach the response, a log or the cache.
+3. `scope` is `interpreted` when `company_type` is in the 8 type allowlist of section 3 and `unsupported_entity_type` otherwise (including a missing type). The frontend shows the second as "Not interpreted in phase 1", the section 3 phrase. Such a candidate can still be picked and the readout then returns the unsupported type notice.
+4. `company_number` must match `^[A-Z0-9]{8}$` after upper casing. A candidate that fails it, a `title` over 500 characters or a non string value in any of the six fields gives 502 for the whole response. Nothing is silently dropped or repaired, because a short list that quietly omits a company would look complete.
+5. `search_notice` is a fixed string (drafted wording, for the Codex wording review): "Several companies can share a similar name, and a name match is not an identity check. Confirm the company number before relying on a result."
+6. `title` and every other string are untrusted register text. They are stored, cached and returned exactly as received (no trimming, no escaping, no HTML handling), and rendered by the frontend only through `textContent`.
+7. No score, rank, ordering claim, address, officer, person or count of matches is returned. `total_results` is used only for `truncated` and is not returned.
+
+### 14.6 Quota, burst and cache
+
+1. A cache miss spends one upstream call, charged to the same per client weighted allowance (60 calls per five minutes) before the call, and to the same global budget (300 per five minutes). Exhaustion gives 429 with `Retry-After` exactly as for the company lookup.
+2. The same burst limit applies and shares one counter with the company lookup: 10 starts per minute per client in total, checked before validation. A search followed by a pick therefore uses two of the ten, so five complete name flows per minute. (Open question for Codex: keep shared, or count searches separately.)
+3. Cache: keyed by the normalised query (stripped, internal spaces collapsed, case folded with `str.casefold`), value is the parsed response, TTL 300 seconds (shorter than the 15 minute company cache because the candidate list is a hint), bounded LRU of 1,000 entries. The key holds the visitor's text in process memory only and is never logged or exported. A hit spends no upstream call or allowance but counts toward the burst limit. A failed or partial lookup is not cached.
+4. A single instance is still assumed (section 3 item 3b); the limits reset on restart.
+
+### 14.7 Frontend flow (`kyb-lab.html`, for the later build)
+
+1. A second form, "Find a company by name", sits above the company number form, with its own input, a 2 to 160 character hint, and no search as you type: a request is sent only on submit. The API warm up still happens on first focus of either input and nothing is requested on page load.
+2. The candidate list shows, as text only, the title, the company number, the status code and type code (formatted as codes under the existing rule) and the creation date, with "Not interpreted in phase 1" on `unsupported_entity_type` candidates, the fixed `search_notice` and, when `truncated`, a line saying more companies may match and to add more of the name (drafted wording, for review).
+3. Picking a candidate is a button. It puts that candidate's `company_number` in the company number field and runs the existing `GET /api/kyb/company/{number}` lookup. Titles are never links, and no URL from the response is ever used.
+4. Errors: 422 "Enter 2 to 160 characters of text"; 429 "Too many lookups; try again in a minute"; 503 "The register lookup is temporarily unavailable"; network, timeout and other failures use the existing messages. An empty list says "No companies were returned for that text" (drafted wording).
+5. The page never offers a person, officer or PSC search and says it searches company names only.
+
+### 14.8 Tests required (written with the build, none exist yet)
+
+API tests (`tests/test_kyb_lab.py` or a new file):
+
+1. Input validation: 1 and 161 characters rejected, 2 and 160 accepted; leading and trailing space stripped before counting; a string of only spaces rejected; `\n`, `\t`, `\x00`, U+200B, U+202E and U+2028 rejected; accented and non Latin letters accepted; a 422 body that does not contain the input.
+2. Logging: with the log captured, the query text never appears in any record or header, and `query_length` does.
+3. Upstream shape: exactly one upstream call per miss, to `/search/companies`, whose params are exactly `{"q": <stripped text>, "items_per_page": 20}`, even when the client sends `start_index`, `page`, `items_per_page` or `restrictions`; no other search path is ever called.
+4. No paging: an upstream that returns 50 items gives 20 candidates and `truncated` true; a client `start_index` has no effect; the response has no `start_index`, `total_results`, `next` or page key.
+5. Field minimisation: a recursive assertion over the whole response, the cache entry and every captured log record finds no `address`, `address_snippet`, `snippet`, `description`, `description_identifier`, `matches`, `links`, `date_of_cessation`, `etag` or `kind` key at any depth, and none of the upstream marker values from a hostile fixture.
+6. Scope flag: each of the 8 allowlisted types gives `interpreted`; excluded, unknown and missing types give `unsupported_entity_type`.
+7. Quota: a miss charges one allowance unit and one global unit; a hit charges none; a client over 60 calls gets 429 with `Retry-After`; the burst counter is shared with the company lookup (10 mixed calls in a minute, the 11th is 429); an upstream 429 starts the shared 300 second block; the cache key is the normalised query (`Acme  LTD` and `acme ltd` share one entry) and the TTL expires at 300 seconds.
+8. Failure mapping: 404 gives 502 and is not cached; 401 gives 503; timeout gives 504; an unparseable body, a bad `company_number`, a 501 character title and a non string field each give 502; a 200 with no `items` gives an empty list; the missing key gives 503.
+9. Hostile titles: a title containing `<script>`, an `<img onerror>`, quotes, control characters, a 500 character string and right to left override characters is returned byte for byte and the response stays valid JSON.
+
+Frontend tests (`scripts/test_kyb_lab_browser.py`, with candidate fixtures generated by `scripts/generate_kyb_api_fixtures.py` from the API): hostile titles render as literal text with no injected element; picking a candidate runs the company lookup for exactly that number; no API request before focus and exactly one health request on first focus; every error code; the truncated and empty messages; the `Not interpreted in phase 1` label; 390px and 1440px layout.
+
+### 14.9 Risks and open questions for the Codex spec review
+
+1. Name search makes the register enumerable by name. The mitigations are 20 candidates per call, no paging, the per client allowance and burst limit, the global budget and the cache; none stops a determined scraper using many addresses, which is the same residual risk as section 3 item 3b.
+2. The reported pagination limits are forum observations from non staff users; the design avoids relying on them (explicit `items_per_page=20`, no `start_index`). Capture the real default, maximum, ordering, empty result shape and number search behaviour on the first live run and record them in the verification table.
+3. Should searches share the burst counter with lookups (draft) or have their own?
+4. The three drafted sentences (`search_notice`, the truncated line and the empty list line) are wording for review. None of them states a register fact.
+5. A name can resemble a company the visitor does not mean. The `search_notice` and the requirement to pick explicitly are the only controls; there is no confidence score and none may be added.
+6. Titles are untrusted free text from the register and may contain a person's name when a company is named after one. They are shown as the register shows them and are neither enriched nor searched further.
 
 ## Appendix: Codex PR review 1: finding map
 
