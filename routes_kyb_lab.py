@@ -1,6 +1,6 @@
 """Companies House KYB company readout, API phase 1.
 
-Spec: docs/specs/kyb-lab-api-spec.md (v1.2). Where this file and the
+Spec: docs/specs/kyb-lab-api-spec.md (v1.3). Where this file and the
 spec disagree, the spec wins and this file is the bug.
 
 GET /api/kyb/company/{company_number} reads one UK company from the Companies
@@ -925,11 +925,18 @@ def _status(available: bool) -> SourceStatus:
     return "available" if available else "not_returned"
 
 
-def _get_collection(model, path: str, call: _Call, outcome: str, params=None):
-    """Fetch and parse one collection. Returns (parsed, available)."""
+def _get_collection(
+    model, path: str, call: _Call, outcome: str, params=None, empty_on_404=False
+):
+    """Fetch and parse one collection. Returns (parsed, available).
+
+    A 404 is `not_returned`, except where `empty_on_404` is set (spec v1.3: the
+    PSC statements list, which the register answers with 404 when a company has
+    none). Other failures (5xx, timeout) raise and fail the whole request.
+    """
     raw = _fetch(path, call, params)
     if raw is None:
-        return model(), False
+        return model(), empty_on_404
     return _parse(model, raw, outcome), True
 
 
@@ -1040,6 +1047,7 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
         call,
         "bad_psc_statements",
         page,
+        empty_on_404=True,
     )
     filing_list, filing_ok = _get_collection(
         UpFilingList,
