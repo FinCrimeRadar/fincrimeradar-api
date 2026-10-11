@@ -130,7 +130,7 @@ def test_spoofed_xff_is_irrelevant_when_cf_connecting_ip_is_set():
 
 
 @pytest.mark.parametrize(
-    "cf", ["not-an-ip", "1.2.3", "999.1.1.1", "a" * 46, "1.2.3.4" + " x" * 30]
+    "cf", ["not-an-ip", "1.2.3", "999.1.1.1", "a" * 46, "1.2.3.4" + " x" * 30, "::1%a"]
 )
 def test_invalid_or_overlong_cf_connecting_ip_falls_through_to_xff(cf):
     assert (

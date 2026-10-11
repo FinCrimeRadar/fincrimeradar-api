@@ -39,7 +39,9 @@ def trusted_proxy_hops() -> int:
 def _parse_ip(value: str) -> str | None:
     """Normalised address string, or None if the value is not an IP address."""
     value = value.strip()
-    if not value or len(value) > MAX_KEY_LENGTH:
+    # A scoped IPv6 literal ("::1%a") parses and keeps its suffix, so a caller
+    # could mint unlimited distinct limiter keys for one address.
+    if not value or len(value) > MAX_KEY_LENGTH or "%" in value:
         return None
     try:
         return str(ipaddress.ip_address(value))
