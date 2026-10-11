@@ -127,7 +127,7 @@ Caveat: the successor `links.charges` and `links.insolvency` are URL strings. Wh
 
 ## Live verification (11 October 2026)
 
-Method: authenticated calls to the live Public Data API from a local run, roughly 170 requests in total. Raw responses were kept outside the repository. The committed fixtures `tests/fixtures/kyb/live_*.json` are trimmed copies (names pseudonymised, personal fields and registered office address values removed).
+Method: authenticated calls to the live Public Data API from a local run, roughly 170 requests in total. Raw responses were kept outside the repository. The committed fixtures `tests/fixtures/kyb/synthetic_*.json` are fully synthetic since spec v1.2 (reserved `ZZ` company numbers, synthetic names, etags, transaction IDs and charge particulars, shifted dates). They keep the structure the live capture showed. No live response is committed.
 
 | Question | Result | Sample |
 | --- | --- | --- |

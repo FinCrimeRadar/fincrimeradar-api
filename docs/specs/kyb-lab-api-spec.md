@@ -1,6 +1,6 @@
 # Companies House KYB Investigation Lab: API phase 1 specification
 
-Status: v1.1, pending Codex review with the PR diff. Base: FROZEN v1.0, Codex section 7 review PASSED (reviews 1 to 3); gate 1 approved by Pratik 11 Oct 2026 via the Phase B instruction. Any spec change needs a new review.
+Status: v1.2, pending Codex re-review. Base: FROZEN v1.0 (Codex section 7 review PASSED, reviews 1 to 3), v1.1 filing truncation, and the v1.2 remediation of Codex PR review 1 (`kyb-lab-codex-pr-review-1.md`). Any spec change needs a new review.
 Author: Claude (chat), 10 October 2026. Implementation owner: Claude Code. Independent review: Codex, outside Claude Code.
 Tier: CLAUDE.md section 15 high stakes (new API endpoint, trust boundary, third party data, personal data).
 
@@ -89,6 +89,8 @@ Fixed base host `https://api.company-information.service.gov.uk`. The validated 
 4. Filing history, one page, `items_per_page=100`. Sort order is not documented, so do not rely on it: sort the returned items by `date` descending client side before deriving any indicator.
 5. Charges only if the profile `links` object contains a `charges` key, and insolvency only if it contains an `insolvency` key. Only key presence is checked: the URL values are never followed or used. The deprecated `has_charges` and `has_insolvency_history` flags are not used. Key presence as a reliable signal is unconfirmed until a live response is seen. This conserves quota.
 
+6. Source status (v1.2). Only a profile 404 returns a 404 response. A 404 on any other call (officers, PSC list, PSC statements, filing history, charges, insolvency) is not evidence that the collection is empty: it means the register did not return that section. Each collection therefore carries `source_status`, `available` when the call returned 200 and `not_returned` when it returned 404. When `not_returned`: the arrays stay empty, `truncated` is `null` (never `false`), and nothing absence-dependent is derived from that collection. No identity verification indicator is computed from a missing officer or PSC list, no `active_psc_statements` or `ceased_psc_statements` conclusion is drawn from a missing statements list, and no outstanding charge or insolvency conclusion is drawn from a missing charges or insolvency resource. The response carries one fixed notice, `not_returned_notice`: "This register section was not returned. FinCrimeRadar draws no conclusion from its absence." Optional resources (charges, insolvency) are requested only when the profile `links` key is present, so for them the response object is `null` when no link was present (not requested) and carries `source_status` when requested. For an unsupported entity type no collection is requested, so every collection is reported `not_returned` with `truncated: null`.
+
 Authentication: HTTP Basic, API key as username, empty password, read from the environment at startup. If the variable is missing, the endpoint returns 503 and `/api/health` reports `companies_house_configured: false`. Never log or return the key.
 
 Timeouts: explicit connect and read timeouts on every upstream call. No retries on 429. At most one retry with backoff on connection errors only.
@@ -97,7 +99,12 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
 
 1. Global upstream budget of 300 upstream requests per five minutes per instance, enforced before each upstream call. When exhausted, return 503 with `Retry-After`. Two facts justify 300: the Render free plan runs a single instance, and a restart resets the in-memory counters mid-window, so two consecutive process lifetimes can each spend 300 inside one Companies House window, which still totals 600 and stays within the limit. If the service ever runs more than one instance, or moves off the free plan, the budget must be divided or moved to shared storage first.
 2. On any upstream 429, stop all upstream calls until the window resets and return 503 with `Retry-After`. If `X-Ratelimit-*` response headers are present, log them. They are not documented in the Swagger or enumerations, so never depend on them for control flow.
-3. Per client IP limit on lookups of 10 per minute, returning 429 on the 11th lookup in the window. No proxy-aware client IP helper exists in the service (the three existing limiters take the first `X-Forwarded-For` entry, which a client can prepend). Build `client_ip.py` for KYB only: take the Nth-from-right `X-Forwarded-For` entry, N from the `TRUSTED_PROXY_HOPS` environment variable (default 1 for Render), and fall back to `request.client.host` when the header is missing or has fewer than N entries. Do not migrate the existing limiters in this change.
+3. Per client limits (v1.2). Two controls, both keyed on the client IP from item 3a.
+   - Weighted allowance: 60 upstream calls per client per five minutes (20% of the global 300), charged by the upstream calls actually made, before each call. A cache hit costs nothing. When a client has spent its allowance the response is 429 with `Retry-After`. This replaces lookups-per-minute as the quota control, because one uncached lookup costs five to seven upstream calls and ten lookups a minute would let a single client drain the global budget in about 43 lookups.
+   - Burst cap: 10 lookups per minute, returning 429 on the 11th in the window, checked before input validation as before.
+   The budget and both client controls are per instance, in process memory. A single instance is assumed (Render free plan). Shared state (for example Redis) is required before the service scales out, because per instance counters multiply the effective global budget.
+   3a. Client IP (`client_ip.py`, KYB only): use `CF-Connecting-IP` when it is present (Render fronts the service with Cloudflare, which sets that header). Otherwise take the Nth-from-right `X-Forwarded-For` entry, N from `TRUSTED_PROXY_HOPS` (default 1), and fall back to `request.client.host` when the header is missing or has fewer than N entries. Do not migrate the existing limiters in this change. If the service is ever reachable without Cloudflare in front, a caller can set `CF-Connecting-IP` themselves, so the header must be ignored in that deployment.
+   3b. Limiter state is hard bounded: each client map is an LRU of at most 10,000 keys that evicts the oldest key, with no full map scan under the lock. Eviction forgets a client's counters, so an attacker rotating more than 10,000 keys can reset their own allowance; the per client controls limit honest use and the global budget remains the backstop.
 4. Response cache keyed by normalised company number, short TTL (for example 15 minutes), in memory. Document that the cache is per instance.
 
 ### Data minimisation (UK GDPR and abuse control)
@@ -122,9 +129,12 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
   },
   "register_reported_values": { ... } | null,                   // only when current_obligations is register_reported_only
   "indicators": [ Indicator ],
-  "officers": { "items": [ OfficerItem ], "events": [ DatedEvent ], "truncated": bool },
-  "pscs": { "items": [ PscItem ], "active_statements": [...], "ceased_statements": [...], "truncated": bool },
-  "registered_office_change_filings": { "items": [ { "date", "transaction_id", "description_identifier" } ], "truncated": bool } | null,   // PROVISIONAL, truncated added in v1.1
+  "officers": { "source_status": "available" | "not_returned", "items": [ OfficerItem ], "events": [ DatedEvent ], "truncated": bool | null },
+  "pscs": { "records_source_status": "available" | "not_returned", "statements_source_status": "available" | "not_returned", "items": [ PscItem ], "active_statements": [...], "ceased_statements": [...], "truncated": bool | null },
+  "registered_office_change_filings": { "source_status": "available" | "not_returned", "items": [ { "date", "transaction_id", "description_identifier" } ], "truncated": bool | null } | null,   // PROVISIONAL, truncated added in v1.1, source_status in v1.2
+  "charges": { "source_status": "available" | "not_returned" } | null,       // null when the profile has no charges link
+  "insolvency": { "source_status": "available" | "not_returned" } | null,   // null when the profile has no insolvency link
+  "not_returned_notice": "This register section was not returned. FinCrimeRadar draws no conclusion from its absence.",
   "does_not_establish": [ "string" ],
   "attribution": "Source: Companies House public register, retrieved <retrieved_at>. FinCrimeRadar is not affiliated with or endorsed by Companies House."
 }
@@ -144,6 +154,8 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
 }
 ```
 
+`truncated` is `null` whenever the collection is `not_returned`. For `pscs` it is `null` if either the PSC list or the statements list is `not_returned`, otherwise it is true if either is truncated.
+
 `DatedEvent`: `{ "date", "event": "appointed" | "resigned", "name", "role" }`, built from the officers items, sorted by date descending. No "recent" flag, no window and no count of recent events anywhere in the response. Any future time window is an `frc_assessment` and needs separate review.
 
 `Indicator`:
@@ -154,7 +166,7 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
   "label": "plain English",
   "evidence_state": "register_fact" | "frc_assessment",
   "evidence": { field: value, ... },
-  "source_endpoint": "profile" | "officers" | "pscs" | "filing_history" | "charges" | "insolvency",
+  "source_endpoints": [ "profile" | "officers" | "pscs" | "filing_history" | "charges" | "insolvency" ],   // v1.2: list, derived from the contributing records, in the order officers, pscs
   "does_not_establish": "string"
 }
 ```
@@ -293,6 +305,15 @@ Structured log per request: request id, normalised company number (a public iden
 15. Links in upstream responses are never fetched (assert the HTTP client is called only with expected paths).
 16. Client IP helper (`tests/test_client_ip.py`): Nth-from-right selection, `TRUSTED_PROXY_HOPS` parsing and default, spoofed prepended entries do not change the key, fallback to `request.client.host` when the header is missing or too short.
 17. Filing history is sorted by `date` client side regardless of upstream order; PSC string paging fields are coerced.
+18. Source status (v1.2): for each of officers, PSC list, PSC statements, filing history, charges and insolvency, a 404 yields `not_returned`, empty arrays, `truncated: null` and no derived conclusion from that collection; a profile 404 is still a 404; a 200 yields `available`.
+19. Provenance (v1.2): `idv_statement_overdue` and `idv_statement_removed` list `officers` for officer only hits, `pscs` for PSC only hits, and both for mixed hits.
+20. Weighted allowance (v1.2): a client is charged per upstream call actually made; a client cannot cause more than 60 upstream calls in five minutes; a cache hit costs nothing; the burst cap of 10 lookups per minute still returns 429 on the 11th.
+21. Client IP (v1.2): `CF-Connecting-IP` takes precedence over `X-Forwarded-For`; without it the Nth-from-right rule and fallback apply.
+22. Limiter bound (v1.2): 20,000 distinct client keys leave each limiter map at or below 10,000 entries.
+23. Unparseable dates (v1.2): an unparseable value in each of `appointment_verification_start_on`, `appointment_verification_end_on`, `appointment_verification_statement_due_on` and (PSC) `appointment_verification_statement_date` derives `verification_data_conflict`.
+24. Contract (v1.2): the nine indicator `does_not_establish` strings are asserted exactly.
+25. Personal fields (v1.2): one recursive personal field assertion applies to the success body, every error body, `/api/health` and every captured log record.
+26. Fixtures (v1.2): committed fixtures are synthetic. Every company number under `tests/fixtures/kyb/` matches `^ZZ\d{6}$` (a pattern reserved for fixtures in this repository, not a claim about the register numbering scheme), which excludes every captured live number without naming any. Names, etags, transaction IDs and charge particulars are synthetic and dates are shifted so the tested relationships hold.
 
 ## 9. Delivery sequence
 
@@ -352,3 +373,18 @@ Sources: `kyb-lab-codex-review-2.md` (PASS SUBJECT TO CORRECTIONS) and `kyb-lab-
 ## 13. Change log
 
 v1.1 (11 October 2026): one change. `registered_office_change_filings` is now `{ items, truncated }` or null, with `truncated` set by the officers rule applied to filing history (section 4, section 6 dated lists, section 8 item 14). Pending Codex review with the PR diff.
+v1.2 (11 October 2026): remediation of Codex PR review 1 (FAIL). Per collection `source_status` and `not_returned_notice` (sections 3, 4); weighted per client allowance of 60 upstream calls per five minutes, burst cap kept, single instance assumption stated (section 3); `source_endpoints` list on indicators (section 4); `CF-Connecting-IP` precedence and a hard bounded limiter (section 3); synthetic fixtures (section 8 item 26); tests 18 to 26. Pending Codex re-review.
+
+## Appendix: Codex PR review 1: finding map
+
+Source: `kyb-lab-codex-pr-review-1.md`, saved verbatim.
+
+| Finding | Severity | Spec change | Section |
+| --- | --- | --- | --- |
+| Subresource 404s become confirmed looking empty data | High | `source_status` per collection, `truncated` null, no absence dependent derivation, fixed notice | 3 item 6, 4, 8 item 18 |
+| One client can exhaust the shared upstream budget | Medium | 60 call per five minute client allowance weighted by calls made, burst cap kept, single instance assumption, shared state before scale out | 3 item 3, 8 item 20 |
+| PSC identity indicators claim the wrong source endpoint | Medium | `source_endpoints` list derived from contributing records | 4, 8 item 19 |
+| Live fixtures remain linkable personal data | Medium | Synthetic fixtures, reserved `ZZ` numbers, fixture test | 8 item 26 |
+| Client limiter has unbounded key cardinality | Low | Hard bounded LRU of 10,000 keys, no full scan under the lock | 3 item 3b, 8 item 22 |
+| Test gaps (four date fields, nine strings, personal fields on every path) | Test | Tests 23 to 25 | 8 |
+| `CF-Connecting-IP` recommendation (confirmed conforming point, Render guidance) | Hardening | Precedence added | 3 item 3a, 8 item 21 |
