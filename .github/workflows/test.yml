@@ -26,3 +26,9 @@ jobs:
       # directly too. No secret needed: every import in this chain reads
       # its env var lazily, confirmed locally with none set.
       - run: python -c "import main"
+      # KYB Lab (docs/specs/kyb-lab-api-spec.md section 11). Lint and format
+      # checks cover only the new files so existing files are untouched.
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check routes_kyb_lab.py client_ip.py tests
+      - run: ruff format --check routes_kyb_lab.py client_ip.py tests
+      - run: pytest tests/

@@ -1,0 +1,23 @@
+{
+  "etag": "x",
+  "status": [
+    "voluntary-arrangement"
+  ],
+  "cases": [
+    {
+      "type": "corporate-voluntary-arrangement",
+      "number": "1",
+      "dates": [
+        {
+          "type": "instrumented-on",
+          "date": "2024-01-01"
+        }
+      ],
+      "practitioners": [
+        {
+          "name": "PII_PRACTITIONER_MARKER"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "company_name": "EXAMPLE TRADING LIMITED",
+  "company_number": "12345678",
+  "company_status": "active",
+  "type": "ltd",
+  "jurisdiction": "england-wales",
+  "date_of_creation": "2019-03-04",
+  "etag": "x",
+  "has_charges": true,
+  "has_insolvency_history": true,
+  "has_been_liquidated": false,
+  "accounts": {
+    "overdue": true,
+    "next_due": "2026-12-31",
+    "next_accounts": {
+      "due_on": "2026-12-31",
+      "overdue": false,
+      "period_end_on": "2026-03-31"
+    },
+    "last_accounts": {
+      "made_up_to": "2025-03-31"
+    }
+  },
+  "confirmation_statement": {
+    "overdue": false,
+    "next_due": "2026-11-01",
+    "last_made_up_to": "2025-10-18"
+  },
+  "previous_company_names": [],
+  "registered_office_address": {
+    "address_line_1": "PII_REGISTERED_OFFICE_MARKER",
+    "postal_code": "AB1 2CD"
+  },
+  "sic_codes": [
+    "62020"
+  ],
+  "links": {
+    "self": "/company/12345678",
+    "officers": "/company/12345678/officers",
+    "persons_with_significant_control": "/company/12345678/persons-with-significant-control",
+    "filing_history": "/company/12345678/filing-history",
+    "charges": "/company/12345678/charges",
+    "insolvency": "/company/12345678/insolvency"
+  }
+}

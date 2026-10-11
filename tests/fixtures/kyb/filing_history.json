@@ -1,0 +1,71 @@
+{
+  "items_per_page": 100,
+  "start_index": 0,
+  "total_count": 9,
+  "filing_history_status": "filing-history-available",
+  "items": [
+    {
+      "date": "2025-01-15",
+      "category": "address",
+      "description": "change-registered-office-address-company-with-date-old-address-new-address",
+      "transaction_id": "T1",
+      "type": "AD01"
+    },
+    {
+      "date": "2026-03-03",
+      "category": "address",
+      "description": "change-registered-office-address-company",
+      "transaction_id": "T3",
+      "type": "AD01"
+    },
+    {
+      "date": "2022-05-05",
+      "category": "address",
+      "description": "change-registered-office-address-limited-liability-partnership",
+      "transaction_id": "T2",
+      "type": "AD01"
+    },
+    {
+      "date": "2024-04-04",
+      "category": "address",
+      "description": "change-sail-address-company",
+      "transaction_id": "T4",
+      "type": "AD02"
+    },
+    {
+      "date": "2023-03-03",
+      "category": "address",
+      "description": "move-registers-to-registered-office-company",
+      "transaction_id": "T5",
+      "type": "AD04"
+    },
+    {
+      "date": "2021-02-02",
+      "category": "address",
+      "description": "change-registered-office-situation-limited-liability-partnership",
+      "transaction_id": "T6",
+      "type": "AD01"
+    },
+    {
+      "date": "2020-02-02",
+      "category": "address",
+      "description": "change-registered-office-addres-overseas-company",
+      "transaction_id": "T7",
+      "type": "AD01"
+    },
+    {
+      "date": "2019-03-04",
+      "category": "incorporation",
+      "description": "incorporation-company",
+      "transaction_id": "T8",
+      "type": "NEWINC"
+    },
+    {
+      "date": "2025-06-06",
+      "category": "accounts",
+      "description": "accounts-with-accounts-type-micro-entity",
+      "transaction_id": "T9",
+      "type": "AA"
+    }
+  ]
+}

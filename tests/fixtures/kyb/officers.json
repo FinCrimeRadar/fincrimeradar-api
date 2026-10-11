@@ -1,0 +1,114 @@
+{
+  "kind": "officer-list",
+  "total_results": 4,
+  "items_per_page": 100,
+  "start_index": 0,
+  "active_count": 3,
+  "resigned_count": 1,
+  "items": [
+    {
+      "name": "SMITH, Alex",
+      "officer_role": "director",
+      "appointed_on": "2019-03-04",
+      "date_of_birth": {
+        "month": 4,
+        "year": 1980,
+        "marker": "PII_DOB_MARKER"
+      },
+      "nationality": "PII_NATIONALITY_MARKER",
+      "occupation": "PII_OCCUPATION_MARKER",
+      "country_of_residence": "PII_RESIDENCE_MARKER",
+      "address": {
+        "address_line_1": "PII_ADDRESS_MARKER",
+        "postal_code": "ZZ1 1ZZ"
+      },
+      "links": {
+        "officer": {
+          "appointments": "http://evil.example/officers/steal/appointments"
+        }
+      },
+      "identity_verification_details": {
+        "appointment_verification_start_on": "2026-02-10",
+        "identity_verified_on": "2026-02-01",
+        "authorised_corporate_service_provider_name": "Example ACSP Ltd",
+        "anti_money_laundering_supervisory_bodies": [
+          "Example Supervisor"
+        ],
+        "preferred_name": "PII_PREFERRED_NAME_MARKER"
+      }
+    },
+    {
+      "name": "EXAMPLE NOMINEES LIMITED",
+      "officer_role": "corporate-director",
+      "appointed_on": "2020-01-15",
+      "date_of_birth": {
+        "month": 4,
+        "year": 1980,
+        "marker": "PII_DOB_MARKER"
+      },
+      "nationality": "PII_NATIONALITY_MARKER",
+      "occupation": "PII_OCCUPATION_MARKER",
+      "country_of_residence": "PII_RESIDENCE_MARKER",
+      "address": {
+        "address_line_1": "PII_ADDRESS_MARKER",
+        "postal_code": "ZZ1 1ZZ"
+      },
+      "links": {
+        "officer": {
+          "appointments": "http://evil.example/officers/steal/appointments"
+        }
+      },
+      "identity_verification_details": {
+        "appointment_verification_start_on": "2026-03-01"
+      }
+    },
+    {
+      "name": "JONES, Sam",
+      "officer_role": "director",
+      "appointed_on": "2020-06-01",
+      "date_of_birth": {
+        "month": 4,
+        "year": 1980,
+        "marker": "PII_DOB_MARKER"
+      },
+      "nationality": "PII_NATIONALITY_MARKER",
+      "occupation": "PII_OCCUPATION_MARKER",
+      "country_of_residence": "PII_RESIDENCE_MARKER",
+      "address": {
+        "address_line_1": "PII_ADDRESS_MARKER",
+        "postal_code": "ZZ1 1ZZ"
+      },
+      "links": {
+        "officer": {
+          "appointments": "http://evil.example/officers/steal/appointments"
+        }
+      },
+      "resigned_on": "2024-05-31",
+      "identity_verification_details": {
+        "appointment_verification_statement_due_on": "2026-01-01"
+      }
+    },
+    {
+      "name": "BROWN, Kim",
+      "officer_role": "secretary",
+      "appointed_on": "2021-09-09",
+      "date_of_birth": {
+        "month": 4,
+        "year": 1980,
+        "marker": "PII_DOB_MARKER"
+      },
+      "nationality": "PII_NATIONALITY_MARKER",
+      "occupation": "PII_OCCUPATION_MARKER",
+      "country_of_residence": "PII_RESIDENCE_MARKER",
+      "address": {
+        "address_line_1": "PII_ADDRESS_MARKER",
+        "postal_code": "ZZ1 1ZZ"
+      },
+      "links": {
+        "officer": {
+          "appointments": "http://evil.example/officers/steal/appointments"
+        }
+      }
+    }
+  ]
+}
