@@ -77,7 +77,7 @@ Excluded (28 types, every other value in the pinned `company_type` mapping), wit
 
 An unsupported type returns the raw profile facts plus the notice "FinCrimeRadar does not interpret indicators for this entity type in phase 1". No indicators, no identity verification derivation, and no upstream calls after the profile (this conserves quota).
 
-For an in scope type, `company_status` is returned raw. There is no indicator derived from status. Current obligation outputs (`accounts_overdue`, `confirmation_statement_overdue` and every identity verification status) are derived only when `company_status == "active"`. For any other status, the readout shows the raw register values labelled "register-reported values; FinCrimeRadar does not interpret current obligations for status <status>", and no derived status or obligation indicator.
+For an in scope type, `company_status` is returned raw. There is no indicator derived from status. Current obligation outputs (`accounts_overdue`, `confirmation_statement_overdue` and every identity verification status) are derived only when `company_status == "active"`. For any other status, the readout shows the raw register values, together with `company.status` and `company.date_of_cessation` when present, labelled "register-reported values; FinCrimeRadar does not interpret current obligations for status <status>", and no derived status or obligation indicator.
 
 ### Upstream calls
 
@@ -114,7 +114,7 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
   "company_number": "string",
   "retrieved_at": "ISO 8601 UTC",
   "source": "Companies House Public Data API",
-  "company": { name, status, type, date_of_creation },        // status and type returned raw
+  "company": { name, status, type, date_of_creation, date_of_cessation },   // all returned raw, as the register names them
   "interpretation": {
     "scope": "interpreted" | "unsupported_entity_type",
     "current_obligations": "interpreted" | "register_reported_only" | "not_applicable",
@@ -205,10 +205,8 @@ Rules:
 | `statement_removed` | "The register records that the verification statement for this role was removed on <date>." (`<date>` is `appointment_verification_end_on`) |
 | `verification_data_conflict` | "The register returned verification dates that are inconsistent or incomplete. FinCrimeRadar does not interpret them; check the register record directly." |
 | `no_statement_status_fields` | "No verification statement dates were returned for this role. This does not establish whether the person is verified, unverified, compliant, non-compliant or outside scope." |
-| `statement_due` | DRAFT, not specified by the review: "The register records <date> as the date by which an identity verification statement must be supplied for this role. No statement has been recorded." |
-| `statement_overdue` | DRAFT, not specified by the review: "The register records <date> as the date by which an identity verification statement must be supplied for this role. That date has passed and no statement has been recorded." |
-
-The two DRAFT rows are Claude's wording and need the same Codex review as the rest of this section.
+| `statement_due` | "The register shows a verification statement for this role is due by <date>. None is recorded as supplied at the time of retrieval." (`<date>` is `appointment_verification_statement_due_on`) |
+| `statement_overdue` | "The register shows a verification statement for this role was due by <date>, and none is recorded as supplied. This is a register record, not a finding that the person is unverified or that an offence has occurred. Check the register record directly before relying on it." (`<date>` is `appointment_verification_statement_due_on`) |
 
 Per record `does_not_establish`: "A register record of a supplied statement is not evidence that the person, the company or its activity is legitimate. It does not establish who ultimately owns or controls the company, whether ownership filings are accurate, the source of funds, or that customer due diligence is complete."
 
@@ -222,8 +220,8 @@ Report facts only. No thresholds, windows or counts of "recent" events. Indicato
 | `confirmation_statement_overdue` (active only) | register_fact | profile `confirmation_statement.overdue` is true |
 | `idv_statement_overdue` (active only) | register_fact | any applicable record derived to `statement_overdue` |
 | `idv_statement_removed` (active only) | register_fact | any applicable record derived to `statement_removed` |
-| `active_psc_statements` | register_fact | PSC statements with no `ceased_on`; show each statement description verbatim from the enumerations |
-| `ceased_psc_statements` | register_fact | PSC statements with `ceased_on`; show each description verbatim and the ceased date |
+| `active_psc_statements` | register_fact | PSC statements with no `ceased_on`; show each statement description verbatim from the enumerations, with its `notified_on` date |
+| `ceased_psc_statements` | register_fact | PSC statements with `ceased_on`; show each description verbatim with its `notified_on` and `ceased_on` dates |
 | `previous_names` | register_fact | profile previous names with dates |
 | `insolvency_history` | register_fact | insolvency resource present |
 | `outstanding_charges` | register_fact | charges with status `outstanding` |
@@ -283,8 +281,8 @@ Structured log per request: request id, normalised company number (a public iden
    - `appointment_verification_statement_date` is shown as "statement can be supplied from <date>" and never changes the status
 4. Applicability: natural-person officer roles `director`, `llp-member` and `llp-designated-member` derive; a resigned officer is `not_interpreted`; a corporate officer (for example `corporate-director`) carrying verification fields is `not_interpreted` with the raw fields shown and the label "fields returned by the register; not interpreted in phase 1"; every other officer role is `not_interpreted`. For PSCs: `individual-person-with-significant-control` derives; a ceased PSC is `not_interpreted`; one fixture per other PSC kind in the Swagger kind enum with no verification fields asserts `not_interpreted`; one non-individual fixture that carries the fields asserts `not_interpreted` with the raw fields shown and no derived status.
 5. Scope: one test per excluded `type` in section 3 asserting the notice, the raw profile facts, no indicators, no identity verification derivation and no upstream calls after the profile; an unknown `type` value is treated as unsupported; each of the eight in scope types is interpreted.
-6. Status: a dissolved company returns raw `company.status`, no `accounts_overdue` or `confirmation_statement_overdue` indicator, no identity verification status on any record, and `register_reported_values` carrying the label "register-reported values; FinCrimeRadar does not interpret current obligations for status dissolved". No `company_status_not_active` indicator exists for any status.
-7. PSC statements: a statement without `ceased_on` appears only under `active_statements` and fires `active_psc_statements`; a ceased only statement list produces no active statements and fires only `ceased_psc_statements`; descriptions are verbatim from the pinned enumerations; an unknown statement code shows the raw code.
+6. Status: a dissolved company returns raw `company.status`, no `accounts_overdue` or `confirmation_statement_overdue` indicator, no identity verification status on any record, and `register_reported_values` carrying `company.status`, `company.date_of_cessation` when present, and the label "register-reported values; FinCrimeRadar does not interpret current obligations for status dissolved". No `company_status_not_active` indicator exists for any status.
+7. PSC statements: a statement without `ceased_on` appears only under `active_statements` and fires `active_psc_statements`; a ceased only statement list produces no active statements and fires only `ceased_psc_statements`; each statement shows its `notified_on` date (and `ceased_on` where ceased); descriptions are verbatim from the pinned enumerations; an unknown statement code shows the raw code.
 8. Dated lists: `officers.events` contains appointments and resignations with dates in descending order and no "recent" flag or count anywhere in the response; `company.date_of_creation` is returned; `registered_office_change_filings` fires for each of the six identifiers, excludes category `address` with any other description, excludes the SAIL, move registers, situation and overseas identifiers, and returns null when `description` is rendered text.
 9. Global `does_not_establish` equals the six items in section 6, verbatim.
 10. Data minimisation: response never contains date of birth, nationality, occupation, address or preferred name keys, asserted recursively.
@@ -315,3 +313,27 @@ Frontend page, shared address density, officer network views, bulk or streaming 
 2. Tooling: `requirements-dev.txt` with pinned pytest, httpx and ruff. CI gains a step running `ruff check` and `ruff format --check` on the new files only, then `pytest tests/`. Existing CI steps are unchanged. No mypy for now, to avoid blast radius on existing files.
 3. Pydantic: our own response models use `strict=True, extra="forbid"`. Upstream projection models use `extra="ignore"`.
 4. The three existing rate limiters (`main.py`, `routes_scenario_lab.py`, `routes_sar_sandbox.py`) are not changed here. Their spoofable `X-Forwarded-For` handling is tracked separately in the frontend repository `BACKLOG.md`.
+
+## 12. Scope decisions recorded 11 October 2026
+
+1. `old-public-company` and `northern-ireland` stay excluded from phase 1 scope. They are legacy categories, and current Northern Ireland companies are registered as `ltd` or `plc`, which are in scope.
+2. There is no aggregate `verification_data_conflict` indicator. A conflict is shown only on the individual officer or PSC record, with the display text in section 5.3.
+
+## Appendix: Codex review 1: finding map
+
+Source: the review is saved verbatim as `kyb-lab-codex-review-1.md` (verdict FAIL, ten findings). This map uses the review's own finding numbers. Where a finding asked for a specific correction, the row says how the spec meets it, and any deliberate difference is stated.
+
+| Finding | Severity | Review's required correction | Where the spec answers it | How |
+| --- | --- | --- | --- | --- |
+| 1 | High | Add an `indeterminate` or `verification_data_conflict` outcome for impossible or unresolved combinations; validate chronology and future dates; do not treat absence of the three statement fields as absence of all verification data | Section 5.2 rows a and f | Row a: start after today, end after today, end before start, or end present with start absent gives `verification_data_conflict`, evaluated first. Row f: start, end and due all absent gives `no_statement_status_fields`, with ACSP evidence shown. Due today stays `statement_due` (row d, on or after today). |
+| 2 | High | Determine applicability from the documented role and kind; use an explicit `not_applicable` or `not_yet_in_scope` state; do not treat generic list fields on non-individual payloads as proof | Section 5.1 | Applicability is role and kind only (`director`, `llp-member`, `llp-designated-member`; PSC kind `individual-person-with-significant-control`). Everything else is `not_interpreted`, not derived, with any raw fields labelled. Difference from the review: the state is named `not_interpreted` (not `not_applicable` or `not_yet_in_scope`), because the spec does not assert why a record is outside the derivation. |
+| 3 | Medium | Describe only the absent fact; say it does not establish verified, unverified, compliant, non-compliant or outside scope | Section 5.3, `no_statement_status_fields` | The display text states only the absent fact and lists the outcomes it does not establish, as the review asks. `no_verification_data` is removed. |
+| 4 | Medium | Attribute the conclusion to the register; say it is not evidence of legitimacy | Section 5.3, `statement_supplied` and per record `does_not_establish` | "The register records that an identity verification statement was supplied for this role on <date>, linking a verified identity to it." The per record text states a supplied statement is not evidence the person, company or activity is legitimate. |
+| 5 | High | Return raw status; do not derive "not active"; say `active` does not establish trading and that dormant accounts are separate | Section 3 (scope), section 6 | `company_status_not_active` is deleted. Status is returned raw. Global `does_not_establish` item 3 states register status does not establish trading and that dormant accounts are a separate filing fact. |
+| 6 | High | Make labels type-aware, or suppress indicators whose type-specific meaning is unverified | Section 3 (scope), section 6 | Registered overseas entities, UK establishments and overseas companies are out of scope, so annual statement, managing officer notification and beneficial owner semantics never reach an interpreted output. `recently_incorporated` is deleted. `company.date_of_creation` is returned under the register's own field name and is not labelled as incorporation. |
+| 7 | Medium | Distinguish active and ceased statements and include their dates | Section 6 | `active_psc_statements` and `ceased_psc_statements`, each with `notified_on` (and `ceased_on` where ceased). Added on 11 October 2026 after this re-check: the earlier version showed the ceased date only. |
+| 8 | Medium | Gate current-duty language by entity status, or label as historical and show status and cessation date | Section 3 (scope), section 4 | Current obligation outputs and every identity verification status are derived only when `company_status == "active"`. For other statuses the raw values are shown with `company.status` and `company.date_of_cessation` and the labelled notice. Added on 11 October 2026 after this re-check: `date_of_cessation` was missing from the earlier version. |
+| 9 | Medium | Return dated facts without a binary "recent" indicator, or make the 12 month rule an `frc_assessment` | Sections 4 and 6 | `recent_officer_changes`, `recent_registered_office_change` and `recently_incorporated` are deleted. `officers.events`, `registered_office_change_filings` and `company.date_of_creation` return dated facts with no flag, window or count. Any future window is an `frc_assessment` needing separate review. |
+| 10 | Medium | Add inaccuracies, errors and omissions; add that status, identity statements and indicator absence do not establish legitimacy, trading, ownership accuracy or CDD; preserve that basic checks occur | Section 6, global `does_not_establish` | Six items. Item 1 covers inaccuracies, errors and omissions and Companies House's lack of responsibility for their consequences. Item 2 preserves that Companies House checks completeness and validity. Items 3 to 6 cover status, identity records, absence of an indicator and the CDD disclaimer. |
+
+Open points from the review that the spec does not resolve, by design: a deceased PSC need not verify (finding 3) and no register field identifies one, so `no_statement_status_fields` wording covers it only generally; and the "personal code links one verified identity to many roles" explanation (finding 4) is reflected in the display text but is not independently sourced in this spec.
