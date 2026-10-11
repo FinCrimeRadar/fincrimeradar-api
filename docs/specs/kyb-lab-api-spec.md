@@ -1,6 +1,6 @@
 # Companies House KYB Investigation Lab: API phase 1 specification
 
-Status: FROZEN v1.0, Codex section 7 review PASSED (reviews 1 to 3); gate 1 approved by Pratik 11 Oct 2026 via the Phase B instruction. Any spec change needs a new review.
+Status: v1.1, pending Codex review with the PR diff. Base: FROZEN v1.0, Codex section 7 review PASSED (reviews 1 to 3); gate 1 approved by Pratik 11 Oct 2026 via the Phase B instruction. Any spec change needs a new review.
 Author: Claude (chat), 10 October 2026. Implementation owner: Claude Code. Independent review: Codex, outside Claude Code.
 Tier: CLAUDE.md section 15 high stakes (new API endpoint, trust boundary, third party data, personal data).
 
@@ -124,7 +124,7 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
   "indicators": [ Indicator ],
   "officers": { "items": [ OfficerItem ], "events": [ DatedEvent ], "truncated": bool },
   "pscs": { "items": [ PscItem ], "active_statements": [...], "ceased_statements": [...], "truncated": bool },
-  "registered_office_change_filings": [ { "date", "transaction_id", "description_identifier" } ] | null,   // PROVISIONAL
+  "registered_office_change_filings": { "items": [ { "date", "transaction_id", "description_identifier" } ], "truncated": bool } | null,   // PROVISIONAL, truncated added in v1.1
   "does_not_establish": [ "string" ],
   "attribution": "Source: Companies House public register, retrieved <retrieved_at>. FinCrimeRadar is not affiliated with or endorsed by Companies House."
 }
@@ -233,7 +233,7 @@ PSC statement descriptions: the profile `statement` code maps to the `statement_
 Dated lists returned instead of thresholds (all in the response, none with a flag):
 
 1. `officers.events`: appointments and resignations with dates.
-2. `registered_office_change_filings`: filings where `category == "address"` AND `description` exactly equals one of the six identifiers below, with their dates. PROVISIONAL, see the rule below.
+2. `registered_office_change_filings`: filings where `category == "address"` AND `description` exactly equals one of the six identifiers below, with their dates, as `{ items, truncated }`. `truncated` is true when the filing history `total_count` exceeds the number of filing items returned, the same total versus returned rule as the officers list (v1.1). A true flag means older registered office changes may be missing. PROVISIONAL, see the rule below.
 3. `company.date_of_creation`.
 
 Registered office description identifiers (from `filing_history_descriptions.yml` in `companieshouse/api-enumerations`, pinned commit `05067abc50da2c9277bb5d3504187f55e5ec9e24`, lines 902 to 907 at that commit):
@@ -289,7 +289,7 @@ Structured log per request: request id, normalised company number (a public iden
 11. Upstream failure: 404, 401 (bad key returns 503 without leaking detail), 429 (stops calls, 503 with Retry-After), 5xx, timeout.
 12. Missing key fails closed with 503.
 13. Global budget and per IP limit enforced. Cache hit makes zero upstream calls.
-14. Truncation flag set when totals exceed returned items.
+14. Truncation flag set when totals exceed returned items, including `registered_office_change_filings.truncated` (true when `total_count` exceeds the items returned, false when totals match or `total_count` is absent).
 15. Links in upstream responses are never fetched (assert the HTTP client is called only with expected paths).
 16. Client IP helper (`tests/test_client_ip.py`): Nth-from-right selection, `TRUSTED_PROXY_HOPS` parsing and default, spoofed prepended entries do not change the key, fallback to `request.client.host` when the header is missing or too short.
 17. Filing history is sorted by `date` client side regardless of upstream order; PSC string paging fields are coerced.
@@ -348,3 +348,7 @@ Sources: `kyb-lab-codex-review-2.md` (PASS SUBJECT TO CORRECTIONS) and `kyb-lab-
 | New issue 1 | Rename `applicable` to `interpreted` or `derivation_eligible`; keep the caveat that a passed due date is not a finding of an offence or non-compliance | 5.1, 4, 6, 8 | State is `derivation_eligible`, response field `eligibility`. The `statement_overdue` text keeps "not a finding that the person is unverified or that an offence has occurred". | RESOLVED |
 | New issue 2 | Narrow the scope description to the eight allowlisted types | 3 | "Phase 1 interprets only the eight company profile types listed below. It does not cover UK-registered companies generally." | RESOLVED |
 | New issue 3 | Change the accounts overdue basis and tests to `accounts.next_accounts.overdue` | 6, 8, verification table | "profile `accounts.next_accounts.overdue` is true. The older `accounts.overdue` is deprecated in the Swagger and is not used." The deprecation sweep also replaced `has_charges` and `has_insolvency_history` with presence of `links.charges` and `links.insolvency`. | RESOLVED |
+
+## 13. Change log
+
+v1.1 (11 October 2026): one change. `registered_office_change_filings` is now `{ items, truncated }` or null, with `truncated` set by the officers rule applied to filing history (section 4, section 6 dated lists, section 8 item 14). Pending Codex review with the PR diff.

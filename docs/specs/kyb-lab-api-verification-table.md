@@ -124,3 +124,20 @@ Method: every `description` in all 23 saved Swagger files, and every query, path
 | `lastAccounts.made_up_to` | Deprecated. Please use accounts.last_accounts.period_end_on | No | None |
 
 Caveat: the successor `links.charges` and `links.insolvency` are URL strings. Whether the register includes the key only when the resource has content is not stated in the Swagger. A live response is needed to confirm that key presence is a reliable signal; if it is not, call the endpoint and treat a 404 as "none".
+
+## Live verification (11 October 2026)
+
+Method: authenticated calls to the live Public Data API from a local run, roughly 170 requests in total. Raw responses were kept outside the repository. The committed fixtures `tests/fixtures/kyb/live_*.json` are trimmed copies (names pseudonymised, personal fields and registered office address values removed).
+
+| Question | Result | Sample |
+| --- | --- | --- |
+| Does `filing-history` `description` carry the enumeration identifier? | Yes. Address category items carried identifiers such as `change-registered-office-address-company-with-date-old-address-new-address` (type `AD01`), never rendered text. The PROVISIONAL indicator is confirmed for the company identifiers. | 486 filing items across 30 active ltd companies; 19 `AD01` items with an identifier |
+| Is the LLP variant confirmed live? | No. No LLP was sampled, so the three LLP identifiers are verified against the enumerations only. | none |
+| Other address category items observed | `AD02 change-sail-address-company` and `AD03 move-registers-to-sail-company` (both correctly excluded) and three items of type `287` with description `legacy`. The `legacy` items are older registered office changes and are not matched by the six identifiers, so very old changes are not listed. | 5 of 24 address items |
+| Is absence of `links.charges` reliable? | Yes in this sample. All 21 companies without the key returned 200 from `/charges` with `total_count` 0. | 21 companies |
+| Is presence of `links.charges` reliable? | Yes. 9 of 9 returned 200 with charges (7 with outstanding charges, 2 with none outstanding). | 9 companies |
+| Is the deprecated `has_charges` reliable? | No. It was false for 9 of 30 companies that had the `links.charges` key, including companies with outstanding charges. | 30 companies |
+| `links.insolvency` | Present for 6 of 6 companies in liquidation (all returned 200; 5 with one case, 1 with zero cases). Absent for 6 of 6 companies tested without it, and `/insolvency` returned 404 for each. An insolvency resource with zero cases still fires `insolvency_history` under "insolvency resource present". | 12 companies |
+| `/persons-with-significant-control-statements` when none exist | 404, for all 3 captured companies. Handled as an empty list. | 3 companies |
+| `X-Ratelimit-*` response headers | `X-Ratelimit-Limit` (600), `X-Ratelimit-Remain` (counts down per request), `X-Ratelimit-Reset` (epoch seconds), `X-Ratelimit-Window` (`5m`). They are logged only and never used for control. | all calls |
+| Filing history total versus returned | At least one sampled company had `total_count` above the 100 returned, so the truncation flag added in v1.1 matches a real case. | 30 companies |

@@ -411,6 +411,11 @@ class RegisteredOfficeFilingOut(_Out):
     description_identifier: str
 
 
+class RegisteredOfficeFilingsOut(_Out):
+    items: list[RegisteredOfficeFilingOut]
+    truncated: bool
+
+
 class KybResponse(_Out):
     company_number: str
     retrieved_at: str
@@ -421,7 +426,7 @@ class KybResponse(_Out):
     indicators: list[IndicatorOut]
     officers: OfficersOut
     pscs: PscsOut
-    registered_office_change_filings: list[RegisteredOfficeFilingOut] | None
+    registered_office_change_filings: RegisteredOfficeFilingsOut | None
     does_not_establish: list[str]
     attribution: str
 
@@ -846,8 +851,8 @@ def _truncated(total: int | None, returned: int) -> bool:
 
 
 def _registered_office_filings(
-    filings: list[UpFiling],
-) -> list[RegisteredOfficeFilingOut] | None:
+    filings: list[UpFiling], total_count: int | None
+) -> RegisteredOfficeFilingsOut | None:
     """Provisional list, spec section 6. None means the indicator is disabled."""
     if not REGISTERED_OFFICE_FILINGS_ENABLED:
         return None
@@ -868,8 +873,11 @@ def _registered_office_filings(
         for f in filings
         if f.category == "address" and f.description in REGISTERED_OFFICE_IDENTIFIERS
     ]
-    return sorted(
-        hits, key=lambda h: (h.date or "", h.transaction_id or ""), reverse=True
+    hits.sort(key=lambda h: (h.date or "", h.transaction_id or ""), reverse=True)
+    # Spec v1.1: same total versus returned rule as the officers list. One page
+    # of filing history can miss older registered office changes.
+    return RegisteredOfficeFilingsOut(
+        items=hits, truncated=_truncated(total_count, len(filings))
     )
 
 
@@ -1259,7 +1267,9 @@ def build_readout(number: str, retrieved_at: datetime, call: _Call) -> dict:
         indicators=indicators,
         officers=officers,
         pscs=pscs,
-        registered_office_change_filings=_registered_office_filings(filings_src),
+        registered_office_change_filings=_registered_office_filings(
+            filings_src, filing_list.total_count
+        ),
     )
 
 

@@ -5,6 +5,7 @@ The upstream is always a fake. Nothing here calls Companies House.
 
 import copy
 import json
+import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -1068,7 +1069,7 @@ def test_registered_office_filings_fire_for_each_identifier(ctx):
             }
         ]
         ctx.install(filing=filings)
-        assert ctx.body()["registered_office_change_filings"] == [
+        assert ctx.body()["registered_office_change_filings"]["items"] == [
             {
                 "date": f"2025-01-0{n + 1}",
                 "transaction_id": f"X{n}",
@@ -1079,7 +1080,7 @@ def test_registered_office_filings_fire_for_each_identifier(ctx):
 
 def test_registered_office_filings_exclude_every_other_identifier(ctx):
     ctx.install()
-    got = ctx.body()["registered_office_change_filings"]
+    got = ctx.body()["registered_office_change_filings"]["items"]
     assert [f["transaction_id"] for f in got] == ["T3", "T1", "T2"]
     assert all(f["description_identifier"] in SIX_IDENTIFIERS for f in got)
 
@@ -1095,7 +1096,7 @@ def test_category_address_alone_never_matches(ctx):
         }
     ]
     ctx.install(filing=filings)
-    assert ctx.body()["registered_office_change_filings"] == []
+    assert ctx.body()["registered_office_change_filings"]["items"] == []
 
 
 def test_identifier_with_wrong_category_never_matches(ctx):
@@ -1109,7 +1110,7 @@ def test_identifier_with_wrong_category_never_matches(ctx):
         }
     ]
     ctx.install(filing=filings)
-    assert ctx.body()["registered_office_change_filings"] == []
+    assert ctx.body()["registered_office_change_filings"]["items"] == []
 
 
 def test_rendered_text_description_disables_the_list(ctx):
@@ -1516,7 +1517,8 @@ def test_filing_history_is_sorted_client_side_whatever_the_upstream_order(ctx):
         f["items"] = order
         ctx.install(filing=f)
         assert [
-            x["transaction_id"] for x in ctx.body()["registered_office_change_filings"]
+            x["transaction_id"]
+            for x in ctx.body()["registered_office_change_filings"]["items"]
         ] == ["T3", "T1", "T2"]
 
 
@@ -1564,3 +1566,39 @@ def test_no_score_verdict_or_rank_anywhere(ctx):
         "fail",
     ):
         assert not any(banned == k or k.startswith(banned + "_") for k in keys), banned
+
+
+# ------------------------------------------------------------------ spec v1.1: filing truncation
+
+
+def test_registered_office_filings_truncated_when_total_exceeds_returned(ctx):
+    filings = fixture("filing_history")
+    filings["total_count"] = len(filings["items"]) + 40
+    ctx.install(filing=filings)
+    got = ctx.body()["registered_office_change_filings"]
+    assert got["truncated"] is True
+    assert [f["transaction_id"] for f in got["items"]] == ["T3", "T1", "T2"]
+
+
+def test_registered_office_filings_not_truncated_when_totals_match(ctx):
+    filings = fixture("filing_history")
+    filings["total_count"] = len(filings["items"])
+    ctx.install(filing=filings)
+    assert ctx.body()["registered_office_change_filings"]["truncated"] is False
+
+
+def test_registered_office_filings_truncated_false_when_total_missing(ctx):
+    filings = fixture("filing_history")
+    del filings["total_count"]
+    ctx.install(filing=filings)
+    assert ctx.body()["registered_office_change_filings"]["truncated"] is False
+
+
+def test_disabled_list_has_no_truncated_flag(ctx, monkeypatch):
+    monkeypatch.setattr(kyb, "REGISTERED_OFFICE_FILINGS_ENABLED", False)
+    filings = fixture("filing_history")
+    filings["total_count"] = 999
+    ctx.install(filing=filings)
+    assert ctx.body()["registered_office_change_filings"] is None
+
+

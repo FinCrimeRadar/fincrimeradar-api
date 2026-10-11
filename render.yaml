@@ -27,7 +27,7 @@ services:
         rm -f cases.json.tmp
         echo "WARNING: fincrimeradar-api build: cases.json sync fetch failed, falling back to the committed copy in this repo" >&2
       fi
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --no-access-log
     plan: free
     healthCheckPath: /api/health
     # Runtime is pinned by .python-version at the repo root. A PYTHON_VERSION env var here would override it and must be fully qualified (Render requires an exact patch version for that var, unlike .python-version).
