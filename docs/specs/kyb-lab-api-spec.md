@@ -1,6 +1,6 @@
 # Companies House KYB Investigation Lab: API phase 1 specification
 
-Status: DRAFT v2 (11 October 2026), amended after Codex adversarial review 1 returned FAIL. Not READY until the gates in section 1 are complete.
+Status: FROZEN v1.0, Codex section 7 review PASSED (reviews 1 to 3); gate 1 approved by Pratik 11 Oct 2026 via the Phase B instruction. Any spec change needs a new review.
 Author: Claude (chat), 10 October 2026. Implementation owner: Claude Code. Independent review: Codex, outside Claude Code.
 Tier: CLAUDE.md section 15 high stakes (new API endpoint, trust boundary, third party data, personal data).
 
@@ -337,3 +337,14 @@ Source: the review is saved verbatim as `kyb-lab-codex-review-1.md` (verdict FAI
 | 10 | Medium | Add inaccuracies, errors and omissions; add that status, identity statements and indicator absence do not establish legitimacy, trading, ownership accuracy or CDD; preserve that basic checks occur | Section 6, global `does_not_establish` | Six items. Item 1 covers inaccuracies, errors and omissions and Companies House's lack of responsibility for their consequences. Item 2 preserves that Companies House checks completeness and validity. Items 3 to 6 cover status, identity records, absence of an indicator and the CDD disclaimer. |
 
 Open points from the review that the spec does not resolve, by design: a deceased PSC need not verify (finding 3) and no register field identifies one, so `no_statement_status_fields` wording covers it only generally; and the "personal code links one verified identity to many roles" explanation (finding 4) is reflected in the display text but is not independently sourced in this spec.
+
+## Appendix: Codex reviews 2 and 3: finding map
+
+Sources: `kyb-lab-codex-review-2.md` (PASS SUBJECT TO CORRECTIONS) and `kyb-lab-codex-review-3.md` (PASS), both saved verbatim. Review 2 marked findings 2 to 10 of review 1 RESOLVED and finding 1 PARTIALLY RESOLVED, then raised three new medium issues. Its "Required before PASS" list has four items. Review 3 confirmed each.
+
+| Review 2 item | Requirement | Spec section | New text | Review 3 |
+| --- | --- | --- | --- | --- |
+| Finding 1 (partial) | Treat due after end, and PSC statement-open date after due, as `verification_data_conflict` | 5.2 row a, rule 3 | Row a adds "start, end and due are all present and due is after end; for a PSC, `appointment_verification_statement_date` is after `appointment_verification_statement_due_on`". Rule 3: the statement-open date "can trigger `verification_data_conflict` under row a (when it is after the due date) but it never sets any other status". | RESOLVED |
+| New issue 1 | Rename `applicable` to `interpreted` or `derivation_eligible`; keep the caveat that a passed due date is not a finding of an offence or non-compliance | 5.1, 4, 6, 8 | State is `derivation_eligible`, response field `eligibility`. The `statement_overdue` text keeps "not a finding that the person is unverified or that an offence has occurred". | RESOLVED |
+| New issue 2 | Narrow the scope description to the eight allowlisted types | 3 | "Phase 1 interprets only the eight company profile types listed below. It does not cover UK-registered companies generally." | RESOLVED |
+| New issue 3 | Change the accounts overdue basis and tests to `accounts.next_accounts.overdue` | 6, 8, verification table | "profile `accounts.next_accounts.overdue` is true. The older `accounts.overdue` is deprecated in the Swagger and is not used." The deprecation sweep also replaced `has_charges` and `has_insolvency_history` with presence of `links.charges` and `links.insolvency`. | RESOLVED |
