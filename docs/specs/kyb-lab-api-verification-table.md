@@ -138,22 +138,29 @@ Method: authenticated calls to the live Public Data API from a local run, roughl
 | Is presence of `links.charges` reliable? | Yes. 9 of 9 returned 200 with charges (7 with outstanding charges, 2 with none outstanding). | 9 companies |
 | Is the deprecated `has_charges` reliable? | No. It was false for 9 of 30 companies that had the `links.charges` key, including companies with outstanding charges. | 30 companies |
 | `links.insolvency` | Present for 6 of 6 companies in liquidation (all returned 200; 5 with one case, 1 with zero cases). Absent for 6 of 6 companies tested without it, and `/insolvency` returned 404 for each. An insolvency resource with zero cases still fires `insolvency_history` under "insolvency resource present". | 12 companies |
-| `/persons-with-significant-control-statements` when none exist | 404, for all 3 captured companies. Handled as an empty list. | 3 companies |
+| `/persons-with-significant-control-statements` when none exist | 404, for all 3 captured companies. Since spec v1.4 this is reported as `not_returned` (empty arrays, `truncated: null`), not as an empty list: Companies House documents the 404 only as "Resource not found" (Codex PR review 2). | 3 companies |
 | `X-Ratelimit-*` response headers | `X-Ratelimit-Limit` (600), `X-Ratelimit-Remain` (counts down per request), `X-Ratelimit-Reset` (epoch seconds), `X-Ratelimit-Window` (`5m`). They are logged only and never used for control. | all calls |
 | Filing history total versus returned | At least one sampled company had `total_count` above the 100 returned, so the truncation flag added in v1.1 matches a real case. | 30 companies |
 
 ## Company name search (11 October 2026, for spec section 14)
 
-Checked against `spec/search.json` (vendored) and the developer specs pages named in spec section 14.2. No live Companies House call.
+Static facts were checked against `spec/search.json` (vendored) and the developer specs pages named in spec section 14.2. Then six live calls were made on 11 October 2026 and only the shape is recorded here: no title, address or other register data is stored in this repository.
 
 | Question | Result | Path or page |
 | --- | --- | --- |
 | Endpoint path | `GET /search/companies` (host `api.company-information.service.gov.uk`). The vendored file keys it as operation `searchCompanies` and does not state the path. | developer reference page |
 | Parameters | `q` (required string), `items_per_page` (integer), `start_index` (integer), `restrictions` (string). No default, minimum or maximum is stated for any of them. | `search.json#/searchCompanies/get/parameters` |
-| Response fields used | `items[].company_number`, `items[].title`, `items[].company_status`, `items[].company_type`, `items[].date_of_creation`. All five are listed as required. | `search.json#/definitions/CompanySearchItems`, `CommonSearchItems/properties/title` |
-| Response fields dropped | `items[].address`, `address_snippet`, `snippet`, `description`, `description_identifier`, `matches`, `links`, `date_of_cessation`, `kind`; envelope `etag`, `kind`. | same |
-| Envelope counts | `total_results` (described as "further" results, ambiguous), `start_index`, `items_per_page`. No `page_number`. | `search.json#/definitions/CommonSearch` |
-| `company_status` enum | active, dissolved, liquidation, receivership, administration, voluntary-arrangement, converted-closed, insolvency-proceedings, registered, removed (10). | `CompanySearchItems/properties/company_status/enum` |
-| `company_type` enum | 26 values in the vendored file, 23 stated on the developer resource page. Inconsistent; the allowlist of section 3 is used by membership only. | `CompanySearchItems/properties/company_type/enum` |
-| Documented limits | None. Forum users (not Companies House staff) report default 20, maximum 100 and a 1000 result ceiling with HTTP 416; none confirmed by Companies House. | spec 14.2 item 1 |
-| Not documented | sort order, minimum and maximum `q` length, matching rule, whether a company number can be searched, the shape of a no match result. | spec 14.2 items 2 to 5 |
+| Default page size | Documented: none. Live (probe a, no `items_per_page` sent): the response carried `items_per_page` 20 and returned 20 items. | live, 11 October 2026 |
+| Envelope keys | Live: `items`, `items_per_page`, `kind` (`search#companies`), `page_number`, `start_index`, `total_results`. `page_number` is not in the documentation. | live; `search.json#/definitions/CompanySearch`, `CommonSearch` |
+| Meaning of `total_results` | Documented as "further" results (ambiguous). Live: 356 for a common name with 20 items returned, identical with and without `items_per_page=20`. So it is the whole match count. | live probes a and b |
+| No match result | Live (probe c, 13 character nonsense string): 200, the same six key envelope, `items` present and empty, `total_results` 0. Not a 404. | live probe c |
+| Company number as `q` | Live (probe d, 8 digits): 200, 1 item, `total_results` 1, status `active`. That the item is the queried company was not recorded. | live probe d |
+| 1 character and 200 character `q` | Not observed: the output of those two probes was lost to output truncation in the session and the six call limit was then reached. Re-run before the build. | none |
+| Item keys | Live: 13 keys (`address`, `address_snippet`, `company_number`, `company_status`, `company_type`, `date_of_creation`, `description`, `description_identifier`, `kind`, `links`, `matches`, `snippet`, `title`). Key sets differ between items (`snippet` and `matches` are missing on some). `company_number` 8 characters, `date_of_creation` present and `address` an object in all 20. | live probes a and b |
+| Fields used | `items[].company_number`, `items[].title`, `items[].company_status`, `items[].company_type`, `items[].date_of_creation`. All five are listed as required in the schema. | `search.json#/definitions/CompanySearchItems`, `CommonSearchItems/properties/title` |
+| Fields dropped | `items[].address`, `address_snippet`, `snippet`, `description`, `description_identifier`, `matches`, `links`, `date_of_cessation`, `kind`; envelope `etag`, `kind`, `page_number`, `start_index`, `total_results`. | same |
+| `company_status` values | Documented enum has 10 values. Live values seen: `active`, `closed`, `dissolved`, `liquidation`, `open`. `closed` and `open` are outside the documented enum. | `CompanySearchItems/properties/company_status/enum`; live probes a and b |
+| `company_type` enum | 26 values in the vendored file, 23 stated on the developer resource page. 4 distinct values in the first 20 results of probe a. The allowlist of section 3 is used by membership only. | `CompanySearchItems/properties/company_type/enum` |
+| Order | Live: not sorted by title; the first item has the query text in its title and 19 of 20 titles contain it. Not documented. | live probe a |
+| Documented limits | None. Forum users (not Companies House staff) report maximum 100 and a 1000 result ceiling with HTTP 416; not tested and not confirmed by Companies House. | spec 14.2b item 1 |
+| Not documented | maximum `items_per_page`, maximum `start_index`, `q` length limits, matching rule, how the search counts against the 600 per five minute limit. | spec 14.2b |
