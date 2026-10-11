@@ -2317,3 +2317,19 @@ def test_forged_long_client_headers_never_create_a_long_limiter_key(ctx):
         ctx.get(headers={"CF-Connecting-IP": junk, "X-Forwarded-For": junk})
     assert kyb._ip_log and all(len(k) <= 45 for k in kyb._ip_log)
     assert all(len(k) <= 45 for k in kyb._client_calls)
+
+
+def test_1000_random_addresses_in_one_slash_64_share_one_limit(ctx):
+    import random
+
+    ctx.install()
+    rng = random.Random(7)
+    codes = []
+    for _ in range(1000):
+        low = rng.getrandbits(64)
+        groups = [(low >> s) & 0xFFFF for s in (48, 32, 16, 0)]
+        ip = "2001:db8:1:2:" + ":".join(f"{g:x}" for g in groups)
+        codes.append(ctx.get(headers={"CF-Connecting-IP": ip}).status_code)
+    assert codes[:10] == [200] * 10
+    assert set(codes[10:]) == {429}
+    assert list(kyb._ip_log) == ["2001:db8:1:2::/64"]

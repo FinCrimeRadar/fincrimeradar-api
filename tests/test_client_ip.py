@@ -150,10 +150,9 @@ def test_invalid_cf_and_invalid_xff_fall_through_to_the_socket_address():
 def test_ipv6_is_normalised_and_whitespace_stripped():
     assert (
         client_ip(make_request(cf="  2001:0DB8:0000:0000:0000:0000:0000:0001 "))
-        == "2001:db8::1"
+        == "2001:db8::/64"
     )
-    assert client_ip(make_request(xff="x, 2001:DB8::0:1")) == "2001:db8::1"
-    assert client_ip(make_request(cf="::ffff:1.2.3.4")) == "::ffff:1.2.3.4"
+    assert client_ip(make_request(xff="x, 2001:DB8::0:1")) == "2001:db8::/64"
 
 
 def test_ten_thousand_forged_long_values_never_make_a_long_key():
@@ -165,3 +164,31 @@ def test_ten_thousand_forged_long_values_never_make_a_long_key():
         }
         assert all(len(k) <= MAX_KEY_LENGTH for k in keys)
         assert keys == {"198.51.100.9"}
+
+
+# ------------------------------------------------------------------ spec v1.6: key normalisation
+
+
+def test_ipv4_mapped_ipv6_keys_as_ipv4():
+    assert client_ip(make_request(cf="::ffff:1.2.3.4")) == client_ip(
+        make_request(cf="1.2.3.4")
+    )
+    assert client_ip(make_request(xff="x, ::FFFF:0102:0304")) == "1.2.3.4"
+    assert client_ip(make_request(host="::ffff:1.2.3.4")) == "1.2.3.4"
+
+
+def test_ipv6_keys_by_slash_64_prefix():
+    a = client_ip(make_request(cf="2001:db8:1:2::1"))
+    b = client_ip(make_request(cf="2001:db8:1:2:ffff:ffff:ffff:ffff"))
+    c = client_ip(make_request(cf="2001:db8:1:3::1"))
+    assert a == b == "2001:db8:1:2::/64"
+    assert c == "2001:db8:1:3::/64" and c != a
+    assert client_ip(make_request(xff="x, 2001:db8:1:2::9")) == a
+
+
+def test_socket_fallback_is_normalised_the_same_way():
+    assert client_ip(make_request(host="2001:db8:1:2::77")) == "2001:db8:1:2::/64"
+    assert client_ip(make_request(host="198.51.100.9")) == "198.51.100.9"
+    assert client_ip(make_request(host="testclient")) == "testclient"
+    # an invalid header falls through to the normalised socket address
+    assert client_ip(make_request(cf="nope", host="2001:db8::5")) == "2001:db8::/64"

@@ -10,6 +10,9 @@ Spec: docs/specs/kyb-lab-api-spec.md, "Quota and abuse protection", item 3a.
 
 CF-Connecting-IP wins when present and valid (v1.2). Every header derived key must
 parse as an IP address, so a limiter key is never longer than 45 characters (v1.5).
+IPv4-mapped IPv6 keys as IPv4 and any other IPv6 keys by its /64 prefix, because a
+single subscriber normally holds a whole /64 (v1.6). The socket fallback is
+normalised the same way.
 """
 
 import ipaddress
@@ -43,10 +46,20 @@ def _parse_ip(value: str) -> str | None:
     # could mint unlimited distinct limiter keys for one address.
     if not value or len(value) > MAX_KEY_LENGTH or "%" in value:
         return None
+    return _key(value)
+
+
+def _key(value: str) -> str | None:
+    """Limiter key for an address string, or None if it is not an IP address."""
     try:
-        return str(ipaddress.ip_address(value))
+        ip = ipaddress.ip_address(value)
     except ValueError:
         return None
+    if ip.version == 6:
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
 
 
 def client_ip(request: Request) -> str:
@@ -64,4 +77,7 @@ def client_ip(request: Request) -> str:
             xff = _parse_ip(entries[-hops])
             if xff:
                 return xff
-    return request.client.host if request.client else "unknown"
+    if not request.client:
+        return "unknown"
+    host = request.client.host
+    return _key(host) or host
