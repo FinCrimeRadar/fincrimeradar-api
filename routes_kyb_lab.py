@@ -608,15 +608,17 @@ def _fetch(path: str, call: _Call, params: dict | None = None):
                 (COMPANIES_HOUSE_API_KEY, ""),
                 (CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
             )
+        except requests.Timeout:
+            # Checked first: ConnectTimeout is both a Timeout and a
+            # ConnectionError, and a timeout is never retried (504, no retry).
+            call.seconds += _monotonic() - started
+            raise _Fail(504, "Upstream timeout.", "upstream_timeout") from None
         except requests.ConnectionError:
             call.seconds += _monotonic() - started
             if attempts == 1:
                 time.sleep(CONNECTION_RETRY_BACKOFF_SECONDS)
                 continue
             raise _Fail(502, "Upstream error.", "upstream_connection_error") from None
-        except requests.Timeout:
-            call.seconds += _monotonic() - started
-            raise _Fail(504, "Upstream timeout.", "upstream_timeout") from None
         except requests.RequestException:
             call.seconds += _monotonic() - started
             raise _Fail(502, "Upstream error.", "upstream_error") from None

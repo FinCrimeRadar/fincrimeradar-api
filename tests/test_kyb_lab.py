@@ -1602,3 +1602,8 @@ def test_disabled_list_has_no_truncated_flag(ctx, monkeypatch):
     assert ctx.body()["registered_office_change_filings"] is None
 
 
+def test_connect_timeout_is_a_504_and_is_not_retried(ctx):
+    up = ctx.install(profile=requests.ConnectTimeout("connect timed out"))
+    r = ctx.get()
+    assert r.status_code == 504 and r.json() == {"detail": "Upstream timeout."}
+    assert up.paths.count(PATHS["profile"]) == 1
