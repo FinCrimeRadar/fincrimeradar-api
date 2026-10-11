@@ -144,7 +144,7 @@ Method: authenticated calls to the live Public Data API from a local run, roughl
 
 ## Company name search (11 October 2026, for spec section 14)
 
-Static facts were checked against `spec/search.json` (vendored) and the developer specs pages named in spec section 14.2. Then six live calls were made on 11 October 2026 and only the shape is recorded here: no title, address or other register data is stored in this repository.
+Static facts were checked against `spec/search.json` (vendored) and the developer specs pages named in spec section 14.2. Then nine live calls were made on 11 October 2026 (six, then three to recover probes whose output was lost) and only the shape is recorded here: no title, address or other register data is stored in this repository.
 
 | Question | Result | Path or page |
 | --- | --- | --- |
@@ -154,8 +154,9 @@ Static facts were checked against `spec/search.json` (vendored) and the develope
 | Envelope keys | Live: `items`, `items_per_page`, `kind` (`search#companies`), `page_number`, `start_index`, `total_results`. `page_number` is not in the documentation. | live; `search.json#/definitions/CompanySearch`, `CommonSearch` |
 | Meaning of `total_results` | Documented as "further" results (ambiguous). Live: 356 for a common name with 20 items returned, identical with and without `items_per_page=20`. So it is the whole match count. | live probes a and b |
 | No match result | Live (probe c, 13 character nonsense string): 200, the same six key envelope, `items` present and empty, `total_results` 0. Not a 404. | live probe c |
-| Company number as `q` | Live (probe d, 8 digits): 200, 1 item, `total_results` 1, status `active`. That the item is the queried company was not recorded. | live probe d |
-| 1 character and 200 character `q` | Not observed: the output of those two probes was lost to output truncation in the session and the six call limit was then reached. Re-run before the build. | none |
+| Company number as `q` | Live (probe d, 8 digits, run twice): 200, 1 item, `total_results` 1, status `active`, and the single result's `company_number` equals the queried number. | live probe d |
+| 1 character `q` | Live (probe e): 200, same six key envelope, 20 items, `total_results` 10000. Accepted by the upstream. | live probe e |
+| 200 character `q` | Live (probe f): 200, same six key envelope, 20 items, `total_results` 10000 (the same as the 1 character query; possibly a ceiling on the reported count, undocumented). Accepted by the upstream. | live probe f |
 | Item keys | Live: 13 keys (`address`, `address_snippet`, `company_number`, `company_status`, `company_type`, `date_of_creation`, `description`, `description_identifier`, `kind`, `links`, `matches`, `snippet`, `title`). Key sets differ between items (`snippet` and `matches` are missing on some). `company_number` 8 characters, `date_of_creation` present and `address` an object in all 20. | live probes a and b |
 | Fields used | `items[].company_number`, `items[].title`, `items[].company_status`, `items[].company_type`, `items[].date_of_creation`. All five are listed as required in the schema. | `search.json#/definitions/CompanySearchItems`, `CommonSearchItems/properties/title` |
 | Fields dropped | `items[].address`, `address_snippet`, `snippet`, `description`, `description_identifier`, `matches`, `links`, `date_of_cessation`, `kind`; envelope `etag`, `kind`, `page_number`, `start_index`, `total_results`. | same |
@@ -163,4 +164,4 @@ Static facts were checked against `spec/search.json` (vendored) and the develope
 | `company_type` enum | 26 values in the vendored file, 23 stated on the developer resource page. 4 distinct values in the first 20 results of probe a. The allowlist of section 3 is used by membership only. | `CompanySearchItems/properties/company_type/enum` |
 | Order | Live: not sorted by title; the first item has the query text in its title and 19 of 20 titles contain it. Not documented. | live probe a |
 | Documented limits | None. Forum users (not Companies House staff) report maximum 100 and a 1000 result ceiling with HTTP 416; not tested and not confirmed by Companies House. | spec 14.2b item 1 |
-| Not documented | maximum `items_per_page`, maximum `start_index`, `q` length limits, matching rule, how the search counts against the 600 per five minute limit. | spec 14.2b |
+| Not documented | maximum `items_per_page`, maximum `start_index`, `q` length limits (1 and 200 characters were accepted live), matching rule, whether `total_results` 10000 is a ceiling, how the search counts against the 600 per five minute limit. | spec 14.2b |
