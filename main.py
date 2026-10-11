@@ -8,12 +8,18 @@ from routes_scenario_lab import router as scenario_lab_router
 from routes_guide_chat import router as guide_chat_router
 from routes_sar_sandbox import router as sar_sandbox_router, get_load_status as sar_sandbox_load_status
 from routes_kyb_lab import router as kyb_lab_router, health_fields as kyb_lab_health_fields
+from routes_kyb_search import router as kyb_search_router, install_search_controls
 
 app = FastAPI(title="FinCrimeRadar API", version="1.0.0")
 app.include_router(scenario_lab_router)
 app.include_router(guide_chat_router)
 app.include_router(sar_sandbox_router)
 app.include_router(kyb_lab_router)
+app.include_router(kyb_search_router)
+
+# Path scoped control for POST /api/kyb/search. Added before the CORS middleware
+# so that CORS wraps it (spec 14.3 item 7: behind CORS, in front of routing).
+install_search_controls(app)
 
 app.add_middleware(
     CORSMiddleware,
