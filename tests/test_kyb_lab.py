@@ -2308,3 +2308,12 @@ def test_statements_failure_is_not_a_404_and_never_becomes_a_readout(ctx):
         r = ctx.get()
         assert r.status_code == status
         assert "pscs" not in r.json()
+
+
+def test_forged_long_client_headers_never_create_a_long_limiter_key(ctx):
+    ctx.install()
+    for i in range(300):
+        junk = f"{i}" + "9" * 200
+        ctx.get(headers={"CF-Connecting-IP": junk, "X-Forwarded-For": junk})
+    assert kyb._ip_log and all(len(k) <= 45 for k in kyb._ip_log)
+    assert all(len(k) <= 45 for k in kyb._client_calls)

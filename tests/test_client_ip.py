@@ -3,7 +3,12 @@
 import pytest
 from starlette.requests import Request
 
-from client_ip import DEFAULT_TRUSTED_PROXY_HOPS, client_ip, trusted_proxy_hops
+from client_ip import (
+    DEFAULT_TRUSTED_PROXY_HOPS,
+    MAX_KEY_LENGTH,
+    client_ip,
+    trusted_proxy_hops,
+)
 
 
 def make_request(xff=None, host="198.51.100.9", cf=None):
@@ -119,3 +124,44 @@ def test_spoofed_xff_is_irrelevant_when_cf_connecting_ip_is_set():
         for i in range(1, 12)
     }
     assert keys == {"198.51.100.1"}
+
+
+# ------------------------------------------------------------------ spec v1.5: keys must parse as IPs
+
+
+@pytest.mark.parametrize(
+    "cf", ["not-an-ip", "1.2.3", "999.1.1.1", "a" * 46, "1.2.3.4" + " x" * 30]
+)
+def test_invalid_or_overlong_cf_connecting_ip_falls_through_to_xff(cf):
+    assert (
+        client_ip(make_request(cf=cf, xff="198.51.100.1, 203.0.113.7")) == "203.0.113.7"
+    )
+
+
+@pytest.mark.parametrize("entry", ["garbage", "1.2.3", "b" * 100, "1.2.3.4:80"])
+def test_invalid_xff_entry_falls_through_to_the_socket_address(entry):
+    assert client_ip(make_request(xff=f"198.51.100.1, {entry}")) == "198.51.100.9"
+
+
+def test_invalid_cf_and_invalid_xff_fall_through_to_the_socket_address():
+    assert client_ip(make_request(cf="nope", xff="also-nope")) == "198.51.100.9"
+
+
+def test_ipv6_is_normalised_and_whitespace_stripped():
+    assert (
+        client_ip(make_request(cf="  2001:0DB8:0000:0000:0000:0000:0000:0001 "))
+        == "2001:db8::1"
+    )
+    assert client_ip(make_request(xff="x, 2001:DB8::0:1")) == "2001:db8::1"
+    assert client_ip(make_request(cf="::ffff:1.2.3.4")) == "::ffff:1.2.3.4"
+
+
+def test_ten_thousand_forged_long_values_never_make_a_long_key():
+    for i in range(10_000):
+        junk = f"{i}" + "9" * (46 + i % 50)
+        keys = {
+            client_ip(make_request(cf=junk, xff=f"1.1.1.1, {junk}")),
+            client_ip(make_request(cf=f"{junk}:{i}", xff=junk)),
+        }
+        assert all(len(k) <= MAX_KEY_LENGTH for k in keys)
+        assert keys == {"198.51.100.9"}
