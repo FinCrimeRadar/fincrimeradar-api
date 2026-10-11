@@ -47,7 +47,7 @@ Every other field name used below was checked against the official Companies Hou
 
 ### Scope of interpretation
 
-Phase 1 interprets only UK-registered companies and limited liability partnerships. Scope is decided from the profile `type`, using an allowlist built from the `company_type` mapping in `constants.yml` of `companieshouse/api-enumerations`, pinned to commit `05067abc50da2c9277bb5d3504187f55e5ec9e24`. Any `type` not on the allowlist is unsupported, including a value that appears in neither the Swagger nor the pinned constants.
+Phase 1 interprets only the eight company profile types listed below. It does not cover UK-registered companies generally. Scope is decided from the profile `type`, using an allowlist built from the `company_type` mapping in `constants.yml` of `companieshouse/api-enumerations`, pinned to commit `05067abc50da2c9277bb5d3504187f55e5ec9e24`. Any `type` not on the allowlist is unsupported, including a value that appears in neither the Swagger nor the pinned constants.
 
 In scope (8 types, all present in both the Swagger `companyProfile.type` enum and the pinned constants):
 
@@ -87,7 +87,7 @@ Fixed base host `https://api.company-information.service.gov.uk`. The validated 
 2. Officers list, one page, `items_per_page=100`. The Swagger and reference pages state no maximum page size, so 100 is a request, not a documented ceiling. Set `truncated: true` when `total_results` (`total_count` for filing history and charges) exceeds the number of items actually returned, so an upstream cap below 100 still produces an honest flag. No unbounded paging.
 3. PSC list and PSC statements list, same paging rule. The PSC list declares `items_per_page` and `start_index` as strings in the Swagger, so the upstream projection model coerces them to integers.
 4. Filing history, one page, `items_per_page=100`. Sort order is not documented, so do not rely on it: sort the returned items by `date` descending client side before deriving any indicator.
-5. Charges and insolvency only if the profile indicates they exist (confirm the flag names in the OpenAPI file). This conserves quota.
+5. Charges only if the profile `links` object contains a `charges` key, and insolvency only if it contains an `insolvency` key. Only key presence is checked: the URL values are never followed or used. The deprecated `has_charges` and `has_insolvency_history` flags are not used. Key presence as a reliable signal is unconfirmed until a live response is seen. This conserves quota.
 
 Authentication: HTTP Basic, API key as username, empty password, read from the environment at startup. If the variable is missing, the endpoint returns 503 and `/api/health` reports `companies_house_configured: false`. Never log or return the key.
 
@@ -134,7 +134,7 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
 
 ```
 {
-  "applicability": "applicable" | "not_interpreted",
+  "eligibility": "derivation_eligible" | "not_interpreted",
   "status": "statement_supplied" | "statement_removed" | "statement_due" | "statement_overdue"
           | "verification_data_conflict" | "no_statement_status_fields" | null,   // null when not_interpreted
   "display": "string",
@@ -165,36 +165,36 @@ No numeric score, weight, rank, or overall verdict anywhere in the response.
 
 ## 5. Identity verification derivation (Codex review required)
 
-### 5.1 Applicability
+### 5.1 Derivation eligibility
 
-A status is derived only for a record that meets all of these:
+A status is derived only for a `derivation_eligible` record, meaning one that meets all of these:
 
 1. The company is in scope under section 3 and `company_status == "active"`.
 2. For an officer: the role is exactly `director`, `llp-member` or `llp-designated-member` (the natural-person roles), and `resigned_on` is absent.
 3. For a PSC: the kind is exactly `individual-person-with-significant-control`, and `ceased_on` is absent.
 
-Every other record gets `applicability: "not_interpreted"` and `status: null`. This includes every `corporate-*` role, every other officer role, every other PSC kind, every resigned or ceased record, and every record of a company that is out of scope or not active. If verification fields are present on a not_interpreted record, show them raw with the label "fields returned by the register; not interpreted in phase 1". A status is never derived for them.
+Every other record gets `eligibility: "not_interpreted"` and `status: null`. This includes every `corporate-*` role, every other officer role, every other PSC kind, every resigned or ceased record, and every record of a company that is out of scope or not active. If verification fields are present on a not_interpreted record, show them raw with the label "fields returned by the register; not interpreted in phase 1". A status is never derived for them.
 
-### 5.2 Derivation for applicable records
+### 5.2 Derivation for derivation_eligible records
 
 "Today" is the date of `retrieved_at` in Europe/London. Evaluate in order. The first match wins.
 
 | Order | Condition | Status |
 | --- | --- | --- |
-| a | Any of: `appointment_verification_start_on` is after today; `appointment_verification_end_on` is after today; end is before start; end is present and start is absent | `verification_data_conflict` |
+| a | Any of: `appointment_verification_start_on` is after today; `appointment_verification_end_on` is after today; end is before start; end is present and start is absent; start, end and due are all present and due is after end; for a PSC, `appointment_verification_statement_date` is after `appointment_verification_statement_due_on` | `verification_data_conflict` |
 | b | Start present, end absent | `statement_supplied` |
 | c | Start present, end present | `statement_removed` |
 | d | Start and end absent, `appointment_verification_statement_due_on` present and on or after today | `statement_due` |
 | e | Start and end absent, due present and before today | `statement_overdue` |
 | f | Start, end and due all absent | `no_statement_status_fields` |
 
-The same table applies to officers and to PSCs, using the fields in each record's `identity_verification_details`. There is no special case by officer role or PSC kind inside the derivation. Applicability in 5.1 is the only place role or kind matters.
+The same table applies to officers and to PSCs, using the fields in each record's `identity_verification_details`. There is no special case by officer role or PSC kind inside the derivation. Derivation eligibility in 5.1 is the only place role or kind matters.
 
 Rules:
 
 1. Use the per appointment due date from the API. Never hard code a transition end date. Secondary sources disagree on whether the transition ends on 17 or 18 November 2026, and the due date varies by appointment.
 2. On every status, show `identity_verified_on`, the ACSP name (`authorised_corporate_service_provider_name`) and `anti_money_laundering_supervisory_bodies` when present, as evidence only. They never change the status, and their absence never lowers it.
-3. Show `appointment_verification_statement_date` as "statement can be supplied from <date>". It never changes the status.
+3. Show `appointment_verification_statement_date` as "statement can be supplied from <date>". It can trigger `verification_data_conflict` under row a (when it is after the due date) but it never sets any other status.
 4. Never use `identity_verified_on` as a verified flag. It is populated only for verification through an authorised corporate service provider.
 
 ### 5.3 Display wording
@@ -216,10 +216,10 @@ Report facts only. No thresholds, windows or counts of "recent" events. Indicato
 
 | id | Evidence state | Basis |
 | --- | --- | --- |
-| `accounts_overdue` (active only) | register_fact | profile `accounts.overdue` is true |
+| `accounts_overdue` (active only) | register_fact | profile `accounts.next_accounts.overdue` is true. The older `accounts.overdue` is deprecated in the Swagger and is not used. |
 | `confirmation_statement_overdue` (active only) | register_fact | profile `confirmation_statement.overdue` is true |
-| `idv_statement_overdue` (active only) | register_fact | any applicable record derived to `statement_overdue` |
-| `idv_statement_removed` (active only) | register_fact | any applicable record derived to `statement_removed` |
+| `idv_statement_overdue` (active only) | register_fact | any `derivation_eligible` record derived to `statement_overdue` |
+| `idv_statement_removed` (active only) | register_fact | any `derivation_eligible` record derived to `statement_removed` |
 | `active_psc_statements` | register_fact | PSC statements with no `ceased_on`; show each statement description verbatim from the enumerations, with its `notified_on` date |
 | `ceased_psc_statements` | register_fact | PSC statements with `ceased_on`; show each description verbatim with its `notified_on` and `ceased_on` dates |
 | `previous_names` | register_fact | profile previous names with dates |
@@ -269,17 +269,17 @@ Structured log per request: request id, normalised company number (a public iden
 ## 8. Tests (pytest, mocked upstream, existing CI workflow)
 
 1. Validation: valid eight digit, short numeric padded, prefixed forms such as `SC123456`, lowercase normalised, rejects path traversal, URL encoded input, empty, overlong, unicode.
-2. Each indicator in section 6 fires and does not fire, from fixture responses.
+2. Each indicator in section 6 fires and does not fire, from fixture responses. `accounts_overdue` is tested against `accounts.next_accounts.overdue` only: a fixture with deprecated `accounts.overdue` true and `next_accounts.overdue` false must not fire it, and the reverse must. Charges and insolvency endpoints are called only when `links.charges` and `links.insolvency` keys are present, and never when only the deprecated `has_charges` or `has_insolvency_history` flags are true.
 3. Identity verification derivation, one test per rule:
-   - 8a: one test for each of the four conflict triggers (start after today; end after today; end before start; end present and start absent), each asserting `verification_data_conflict`, plus a test that conflict wins over a start and end that would otherwise match 8b or 8c
+   - 8a: one test for each of the four conflict triggers (start after today; end after today; end before start; end present and start absent), each asserting `verification_data_conflict`, a fifth test for start, end and due all present with due after end, a sixth test for a PSC whose `appointment_verification_statement_date` is after its `appointment_verification_statement_due_on`, plus a test that conflict wins over a start and end that would otherwise match 8b or 8c
    - 8b `statement_supplied` (start present, end absent), including with `identity_verified_on` absent
    - 8c `statement_removed`
    - 8d `statement_due`, plus a test that a due date equal to today still derives `statement_due`
    - 8e `statement_overdue`
    - 8f `no_statement_status_fields`, plus a test with ACSP fields only, asserting `no_statement_status_fields` with the ACSP evidence shown
    - the today boundary in Europe/London, including a `retrieved_at` instant near midnight UTC in British Summer Time
-   - `appointment_verification_statement_date` is shown as "statement can be supplied from <date>" and never changes the status
-4. Applicability: natural-person officer roles `director`, `llp-member` and `llp-designated-member` derive; a resigned officer is `not_interpreted`; a corporate officer (for example `corporate-director`) carrying verification fields is `not_interpreted` with the raw fields shown and the label "fields returned by the register; not interpreted in phase 1"; every other officer role is `not_interpreted`. For PSCs: `individual-person-with-significant-control` derives; a ceased PSC is `not_interpreted`; one fixture per other PSC kind in the Swagger kind enum with no verification fields asserts `not_interpreted`; one non-individual fixture that carries the fields asserts `not_interpreted` with the raw fields shown and no derived status.
+   - `appointment_verification_statement_date` is shown as "statement can be supplied from <date>", never changes the status on its own, and only produces `verification_data_conflict` when it is after the due date
+4. Derivation eligibility: natural-person officer roles `director`, `llp-member` and `llp-designated-member` derive; a resigned officer is `not_interpreted`; a corporate officer (for example `corporate-director`) carrying verification fields is `not_interpreted` with the raw fields shown and the label "fields returned by the register; not interpreted in phase 1"; every other officer role is `not_interpreted`. For PSCs: `individual-person-with-significant-control` derives; a ceased PSC is `not_interpreted`; one fixture per other PSC kind in the Swagger kind enum with no verification fields asserts `not_interpreted`; one non-individual fixture that carries the fields asserts `not_interpreted` with the raw fields shown and no derived status.
 5. Scope: one test per excluded `type` in section 3 asserting the notice, the raw profile facts, no indicators, no identity verification derivation and no upstream calls after the profile; an unknown `type` value is treated as unsupported; each of the eight in scope types is interpreted.
 6. Status: a dissolved company returns raw `company.status`, no `accounts_overdue` or `confirmation_statement_overdue` indicator, no identity verification status on any record, and `register_reported_values` carrying `company.status`, `company.date_of_cessation` when present, and the label "register-reported values; FinCrimeRadar does not interpret current obligations for status dissolved". No `company_status_not_active` indicator exists for any status.
 7. PSC statements: a statement without `ceased_on` appears only under `active_statements` and fires `active_psc_statements`; a ceased only statement list produces no active statements and fires only `ceased_psc_statements`; each statement shows its `notified_on` date (and `ceased_on` where ceased); descriptions are verbatim from the pinned enumerations; an unknown statement code shows the raw code.
@@ -326,7 +326,7 @@ Source: the review is saved verbatim as `kyb-lab-codex-review-1.md` (verdict FAI
 | Finding | Severity | Review's required correction | Where the spec answers it | How |
 | --- | --- | --- | --- | --- |
 | 1 | High | Add an `indeterminate` or `verification_data_conflict` outcome for impossible or unresolved combinations; validate chronology and future dates; do not treat absence of the three statement fields as absence of all verification data | Section 5.2 rows a and f | Row a: start after today, end after today, end before start, or end present with start absent gives `verification_data_conflict`, evaluated first. Row f: start, end and due all absent gives `no_statement_status_fields`, with ACSP evidence shown. Due today stays `statement_due` (row d, on or after today). |
-| 2 | High | Determine applicability from the documented role and kind; use an explicit `not_applicable` or `not_yet_in_scope` state; do not treat generic list fields on non-individual payloads as proof | Section 5.1 | Applicability is role and kind only (`director`, `llp-member`, `llp-designated-member`; PSC kind `individual-person-with-significant-control`). Everything else is `not_interpreted`, not derived, with any raw fields labelled. Difference from the review: the state is named `not_interpreted` (not `not_applicable` or `not_yet_in_scope`), because the spec does not assert why a record is outside the derivation. |
+| 2 | High | Determine applicability from the documented role and kind; use an explicit `not_applicable` or `not_yet_in_scope` state; do not treat generic list fields on non-individual payloads as proof | Section 5.1 | Derivation eligibility is role and kind only (`director`, `llp-member`, `llp-designated-member`; PSC kind `individual-person-with-significant-control`). Everything else is `not_interpreted`, not derived, with any raw fields labelled. Difference from the review: the state is named `not_interpreted` (not `not_applicable` or `not_yet_in_scope`), because the spec does not assert why a record is outside the derivation. |
 | 3 | Medium | Describe only the absent fact; say it does not establish verified, unverified, compliant, non-compliant or outside scope | Section 5.3, `no_statement_status_fields` | The display text states only the absent fact and lists the outcomes it does not establish, as the review asks. `no_verification_data` is removed. |
 | 4 | Medium | Attribute the conclusion to the register; say it is not evidence of legitimacy | Section 5.3, `statement_supplied` and per record `does_not_establish` | "The register records that an identity verification statement was supplied for this role on <date>, linking a verified identity to it." The per record text states a supplied statement is not evidence the person, company or activity is legitimate. |
 | 5 | High | Return raw status; do not derive "not active"; say `active` does not establish trading and that dormant accounts are separate | Section 3 (scope), section 6 | `company_status_not_active` is deleted. Status is returned raw. Global `does_not_establish` item 3 states register status does not establish trading and that dormant accounts are a separate filing fact. |

@@ -16,76 +16,80 @@ Result legend: EXISTS, DIFFERS (exists but not as the spec describes), DOES NOT 
 
 ## Endpoints
 
-| Spec use | Result | Exact location |
-| --- | --- | --- |
-| Company profile | EXISTS | `GET /company/{company_number}`, `spec/companyProfile.json#get`. Documented responses 200, 401, 404 only. 429 is not documented in the Swagger. |
-| Officers list | EXISTS | `GET /company/{company_number}/officers`, `spec/companyOfficerList.json#listCompanyOfficers` |
-| PSC list | EXISTS | `GET /company/{company_number}/persons-with-significant-control`, `spec/psc.json#listCompanyPSC` |
-| PSC statements list | EXISTS | `GET /company/{company_number}/persons-with-significant-control-statements`, `spec/psc.json#listCompanyPSCStatements` |
-| Filing history | EXISTS | `GET /company/{company_number}/filing-history`, `spec/filingHistory.json#listFilingHistory` |
-| Charges | EXISTS | `GET /company/{company_number}/charges`, `spec/charges.json#chargeList` |
-| Insolvency | EXISTS | `GET /company/{company_number}/insolvency`, `spec/insolvency.json#insolvencyCase`, response schema `spec/insolvency.json#definitions/companyInsolvency` (properties `etag`, `cases`, `status`) |
+| Spec use | Result | Exact location | Deprecated |
+| --- | --- | --- | --- |
+| Company profile | EXISTS | `GET /company/{company_number}`, `spec/companyProfile.json#get`. Documented responses 200, 401, 404 only. 429 is not documented in the Swagger. | No |
+| Officers list | EXISTS | `GET /company/{company_number}/officers`, `spec/companyOfficerList.json#listCompanyOfficers` | No |
+| PSC list | EXISTS | `GET /company/{company_number}/persons-with-significant-control`, `spec/psc.json#listCompanyPSC` | No |
+| PSC statements list | EXISTS | `GET /company/{company_number}/persons-with-significant-control-statements`, `spec/psc.json#listCompanyPSCStatements` | No |
+| Filing history | EXISTS | `GET /company/{company_number}/filing-history`, `spec/filingHistory.json#listFilingHistory` | No |
+| Charges | EXISTS | `GET /company/{company_number}/charges`, `spec/charges.json#chargeList` | No |
+| Insolvency | EXISTS | `GET /company/{company_number}/insolvency`, `spec/insolvency.json#insolvencyCase`, response schema `spec/insolvency.json#definitions/companyInsolvency` (properties `etag`, `cases`, `status`) | No |
 
 ## Company profile fields (`spec/companyProfile.json#definitions`)
 
-| Spec field | Result | Path |
-| --- | --- | --- |
-| company status | EXISTS | `companyProfile.company_status`, enum: active, dissolved, liquidation, receivership, administration, voluntary-arrangement, converted-closed, insolvency-proceedings, registered, removed, closed, open |
-| company type | EXISTS | `companyProfile.type` (enum, 33 values) |
-| incorporated on | EXISTS | `companyProfile.date_of_creation` (string; format not declared as date) |
-| accounts overdue | EXISTS | `accountsInformation.overdue` (boolean), reached as `companyProfile.accounts.overdue`. Also `nextAccounts.overdue` at `accounts.next_accounts.overdue`. |
-| confirmation statement overdue | EXISTS | `confirmationOfStatementInformation.overdue` (boolean), reached as `companyProfile.confirmation_statement.overdue` |
-| charges flag | EXISTS | `companyProfile.has_charges` (boolean) |
-| insolvency flag | EXISTS | `companyProfile.has_insolvency_history` (boolean). `has_been_liquidated` also exists. |
-| previous names | EXISTS | `companyProfile.previous_company_names[]` with `name`, `effective_from`, `ceased_on` (all strings) |
-| registered office changed recently | DOES NOT EXIST as a profile field | The spec lists it under `company`. It must be derived from filing history. See filing history below. |
+| Spec field | Result | Path | Deprecated |
+| --- | --- | --- | --- |
+| company status | EXISTS | `companyProfile.company_status`, enum: active, dissolved, liquidation, receivership, administration, voluntary-arrangement, converted-closed, insolvency-proceedings, registered, removed, closed, open | No |
+| company type | EXISTS | `companyProfile.type` (enum, 33 values) | No |
+| incorporated on | EXISTS | `companyProfile.date_of_creation` (string; format not declared as date) | No |
+| accounts overdue | EXISTS, DEPRECATED | `accountsInformation.overdue` (boolean), reached as `companyProfile.accounts.overdue`. Also `nextAccounts.overdue` at `accounts.next_accounts.overdue`. | Yes. Use `accounts.next_accounts.overdue` |
+| confirmation statement overdue | EXISTS | `confirmationOfStatementInformation.overdue` (boolean), reached as `companyProfile.confirmation_statement.overdue` | No |
+| charges flag | EXISTS, DEPRECATED | `companyProfile.has_charges` (boolean) | Yes. Use `links.charges` |
+| insolvency flag | EXISTS, DEPRECATED | `companyProfile.has_insolvency_history` (boolean). `has_been_liquidated` also exists. | Yes. Use `links.insolvency` |
+| accounts overdue (successor) | EXISTS | `accountsInformation.next_accounts` is `nextAccounts`, with `nextAccounts.overdue` (boolean), reached as `companyProfile.accounts.next_accounts.overdue`. This is the field the swagger names as the replacement for `accounts.overdue`. | No |
+| charges present (successor) | EXISTS | `linksType.charges` (string URL), reached as `companyProfile.links.charges`. The spec checks only that the key is present and never follows the URL. | No |
+| insolvency present (successor) | EXISTS | `linksType.insolvency` (string URL), reached as `companyProfile.links.insolvency`. The spec checks only that the key is present and never follows the URL. | No |
+| date of cessation | EXISTS | `companyProfile.date_of_cessation` (string) | No |
+| previous names | EXISTS | `companyProfile.previous_company_names[]` with `name`, `effective_from`, `ceased_on` (all strings) | No |
+| registered office changed recently | DOES NOT EXIST as a profile field | The spec lists it under `company`. It must be derived from filing history. See filing history below. | No |
 
 ## Officers (`spec/companyOfficerList.json`)
 
-| Spec use | Result | Path |
-| --- | --- | --- |
-| page size param | EXISTS | query `items_per_page` (integer). No maximum is stated in the Swagger or on the reference page. |
-| start index param | EXISTS | query `start_index` (integer) |
-| other params | EXISTS | `register_type`, `register_view` (strings), `order_by` enum appointed_on, resigned_on, surname |
-| totals | EXISTS | `officerList.total_results`, `active_count`, `resigned_count`, `items_per_page`, `start_index`. `inactive_count` does not exist. |
-| name, role | EXISTS | `officerSummary.name`, `officerSummary.officer_role` (enum, 30 values) |
-| appointed, resigned | EXISTS | `officerSummary.appointed_on`, `officerSummary.resigned_on` |
-| identity verification | EXISTS (with a structural quirk) | `officerSummary.identity_verification_details`. Declared `type: object` with an `items.$ref` to `models/officerChanges.json#definitions/identityVerificationDetails`. The target is a normal object schema. |
-| verification fields | EXISTS | `models/officerChanges.json#definitions/identityVerificationDetails`: `appointment_verification_start_on`, `appointment_verification_end_on`, `appointment_verification_statement_due_on`, `identity_verified_on`, `authorised_corporate_service_provider_name`, `anti_money_laundering_supervisory_bodies`, `preferred_name`. All dates are `format: date`. All optional. |
+| Spec use | Result | Path | Deprecated |
+| --- | --- | --- | --- |
+| page size param | EXISTS | query `items_per_page` (integer). No maximum is stated in the Swagger or on the reference page. | No |
+| start index param | EXISTS | query `start_index` (integer) | No |
+| other params | EXISTS | `register_type`, `register_view` (strings), `order_by` enum appointed_on, resigned_on, surname | No |
+| totals | EXISTS | `officerList.total_results`, `active_count`, `resigned_count`, `items_per_page`, `start_index`. `inactive_count` does not exist. | No |
+| name, role | EXISTS | `officerSummary.name`, `officerSummary.officer_role` (enum, 30 values) | No |
+| appointed, resigned | EXISTS | `officerSummary.appointed_on`, `officerSummary.resigned_on` | No |
+| identity verification | EXISTS (with a structural quirk) | `officerSummary.identity_verification_details`. Declared `type: object` with an `items.$ref` to `models/officerChanges.json#definitions/identityVerificationDetails`. The target is a normal object schema. | No |
+| verification fields | EXISTS | `models/officerChanges.json#definitions/identityVerificationDetails`: `appointment_verification_start_on`, `appointment_verification_end_on`, `appointment_verification_statement_due_on`, `identity_verified_on`, `authorised_corporate_service_provider_name`, `anti_money_laundering_supervisory_bodies`, `preferred_name`. All dates are `format: date`. All optional. | No |
 
 ## PSCs (`spec/psc.json`, `spec/pscModels.json#definitions`)
 
-| Spec use | Result | Path |
-| --- | --- | --- |
-| list page params | DIFFERS | `items_per_page` and `start_index` are declared `type: string` on the PSC list (integer on officers and filing history). `register_view` is also present. |
-| statements list params | DIFFERS | `items_per_page` and `start_index` integer, but `register_view` is declared with `type: query` (a Swagger defect, not a real type). |
-| totals | EXISTS | `list.total_results`, `active_count`, `ceased_count`, `items_per_page`, `start_index` |
-| name, kind | EXISTS | `listTwoSummary.name`, `listTwoSummary.kind` (enum, 8 values incl. super-secure kinds) |
-| notified, ceased | EXISTS | `listTwoSummary.notified_on`, `ceased_on`, `ceased` (boolean) |
-| identity verification | EXISTS | `listTwoSummary.identity_verification_details` refs `pscModels.json#definitions/identityVerificationDetails`. Also on `individual`. ABSENT on `corporateEntity` and `legalPerson` detail models. |
-| verification fields | DIFFERS from officers | Same set as officers plus `appointment_verification_statement_date` ("the date from which an identity verification statement can be supplied for the notification"). `appointment_verification_statement_due_on` exists and means "the date by which a statement must be supplied". |
-| statement list items | EXISTS | `statementList.items[]` is `statement`: `kind`, `notified_on`, `ceased_on`, `statement` (string code), `restrictions_notice_withdrawal_reason`, `linked_psc_name`. `statement` has no enum in the Swagger. |
-| statement descriptions | EXISTS in enumerations | `companies-house-enumerations/psc_descriptions.yml`, key `statement_description`, keyed by the `statement` code. Upstream: https://github.com/companieshouse/api-enumerations/blob/main/psc_descriptions.yml (saved copy is pinned to the commit in `SOURCE_COMMIT.txt`). |
+| Spec use | Result | Path | Deprecated |
+| --- | --- | --- | --- |
+| list page params | DIFFERS | `items_per_page` and `start_index` are declared `type: string` on the PSC list (integer on officers and filing history). `register_view` is also present. | No |
+| statements list params | DIFFERS | `items_per_page` and `start_index` integer, but `register_view` is declared with `type: query` (a Swagger defect, not a real type). | No |
+| totals | EXISTS | `list.total_results`, `active_count`, `ceased_count`, `items_per_page`, `start_index` | No |
+| name, kind | EXISTS | `listTwoSummary.name`, `listTwoSummary.kind` (enum, 8 values incl. super-secure kinds) | No |
+| notified, ceased | EXISTS | `listTwoSummary.notified_on`, `ceased_on`, `ceased` (boolean) | No |
+| identity verification | EXISTS | `listTwoSummary.identity_verification_details` refs `pscModels.json#definitions/identityVerificationDetails`. Also on `individual`. ABSENT on `corporateEntity` and `legalPerson` detail models. | No |
+| verification fields | DIFFERS from officers | Same set as officers plus `appointment_verification_statement_date` ("the date from which an identity verification statement can be supplied for the notification"). `appointment_verification_statement_due_on` exists and means "the date by which a statement must be supplied". | No |
+| statement list items | EXISTS | `statementList.items[]` is `statement`: `kind`, `notified_on`, `ceased_on`, `statement` (string code), `restrictions_notice_withdrawal_reason`, `linked_psc_name`. `statement` has no enum in the Swagger. | No |
+| statement descriptions | EXISTS in enumerations | `companies-house-enumerations/psc_descriptions.yml`, key `statement_description`, keyed by the `statement` code. Upstream: https://github.com/companieshouse/api-enumerations/blob/main/psc_descriptions.yml (saved copy is pinned to the commit in `SOURCE_COMMIT.txt`). | No |
 
 ## Filing history (`spec/filingHistory.json`)
 
-| Spec use | Result | Path |
-| --- | --- | --- |
-| params | EXISTS | `category` (comma separated), `items_per_page`, `start_index` |
-| ordering | NOT STATED | The Swagger does not state sort order. "Most recent first" in the spec is not confirmed by the OpenAPI file. |
-| totals | EXISTS | `filingHistoryList.total_count`, `items_per_page`, `start_index` |
-| item fields | EXISTS | `filingHistoryItem.type`, `category`, `date`, `description`, `transaction_id` |
-| category for registered office | EXISTS | `filingHistoryItem.category` enum includes `address` |
-| type codes for registered office change | DOES NOT EXIST in the OpenAPI | `filingHistoryItem.type` is an unconstrained string. No type code list exists in the Swagger, and `AD01` appears in none of the saved files. |
-| alternative identifier | EXISTS in enumerations | `filing_history_descriptions.yml` holds description identifiers, e.g. `change-registered-office-address-company`, `...-with-date-old-address`, `...-with-date-old-address-new-address`, `change-registered-office-address-limited-liability-partnership` (and variants). `filingHistoryItem.description` is typed `string`, and whether it carries these identifiers or rendered text is not stated in the Swagger. Not yet confirmed against a live response. |
+| Spec use | Result | Path | Deprecated |
+| --- | --- | --- | --- |
+| params | EXISTS | `category` (comma separated), `items_per_page`, `start_index` | No |
+| ordering | NOT STATED | The Swagger does not state sort order. "Most recent first" in the spec is not confirmed by the OpenAPI file. | No |
+| totals | EXISTS | `filingHistoryList.total_count`, `items_per_page`, `start_index` | No |
+| item fields | EXISTS | `filingHistoryItem.type`, `category`, `date`, `description`, `transaction_id` | No |
+| category for registered office | EXISTS | `filingHistoryItem.category` enum includes `address` | No |
+| type codes for registered office change | DOES NOT EXIST in the OpenAPI | `filingHistoryItem.type` is an unconstrained string. No type code list exists in the Swagger, and `AD01` appears in none of the saved files. | No |
+| alternative identifier | EXISTS in enumerations | `filing_history_descriptions.yml` holds description identifiers, e.g. `change-registered-office-address-company`, `...-with-date-old-address`, `...-with-date-old-address-new-address`, `change-registered-office-address-limited-liability-partnership` (and variants). `filingHistoryItem.description` is typed `string`, and whether it carries these identifiers or rendered text is not stated in the Swagger. Not yet confirmed against a live response. | No |
 
 ## Charges and insolvency
 
-| Spec use | Result | Path |
-| --- | --- | --- |
-| charge status values | EXISTS | `spec/charges.json#definitions/chargeDetails.status` enum: outstanding, fully-satisfied, part-satisfied, satisfied |
-| totals | DIFFERS | `chargeList.total_count`, `satisfied_count`, `part_satisfied_count`, and `unfiletered_count` (the Swagger spells it that way). Paging params are declared with `title` rather than `name`. |
-| insolvency present | EXISTS | profile `has_insolvency_history`, plus `companyInsolvency.cases[]` (`type` enum 12 values, `dates`, `practitioners`, `number`) and `companyInsolvency.status` |
+| Spec use | Result | Path | Deprecated |
+| --- | --- | --- | --- |
+| charge status values | EXISTS | `spec/charges.json#definitions/chargeDetails.status` enum: outstanding, fully-satisfied, part-satisfied, satisfied | No |
+| totals | DIFFERS | `chargeList.total_count`, `satisfied_count`, `part_satisfied_count`, and `unfiletered_count` (the Swagger spells it that way). Paging params are declared with `title` rather than `name`. | No |
+| insolvency present | EXISTS | profile `has_insolvency_history`, plus `companyInsolvency.cases[]` (`type` enum 12 values, `dates`, `practitioners`, `number`) and `companyInsolvency.status` | No |
 
 ## Rate limit
 
@@ -103,3 +107,20 @@ Result legend: EXISTS, DIFFERS (exists but not as the spec describes), DOES NOT 
 5. Maximum page size is not documented for any list endpoint.
 6. 429 and rate limit headers are not documented in the Swagger.
 7. The OpenAPI deliverable is Swagger 2.0 split across 24 files with placeholder hosts, not one OpenAPI document.
+
+## Deprecation sweep (11 October 2026)
+
+Method: every `description` in all 23 saved Swagger files, and every query, path and body parameter, was searched for "deprecated", "obsolete", "superseded", "no longer", "replaced by" and "use ... instead". Eight properties carry a deprecation note, all in `spec/companyProfile.json`. None of the other 22 files contains one. The enumerations repository files were not part of this sweep.
+
+| Deprecated property | Swagger note | Used by the spec | Action |
+| --- | --- | --- | --- |
+| `accountsInformation.overdue` (`accounts.overdue`) | Deprecated. Please use accounts.next_accounts.overdue | Yes, `accounts_overdue` indicator | Replaced by `accounts.next_accounts.overdue` |
+| `companyProfile.has_charges` | Deprecated. Please use links.charges | Yes, to decide whether to call the charges endpoint | Replaced by presence of `links.charges` |
+| `companyProfile.has_insolvency_history` | Deprecated. Please use links.insolvency | Yes, to decide whether to call the insolvency endpoint | Replaced by presence of `links.insolvency` |
+| `companyProfile.has_been_liquidated` | Deprecated. Please use links.insolvency | No | None |
+| `companyProfile.is_community_interest_company` | Deprecated. Please use subtype | No | None |
+| `accountsInformation.next_due` | Deprecated. Please use accounts.next_accounts.due_on | No | None |
+| `accountsInformation.next_made_up_to` | Deprecated. Please use accounts.next_accounts.period_end_on | No | None |
+| `lastAccounts.made_up_to` | Deprecated. Please use accounts.last_accounts.period_end_on | No | None |
+
+Caveat: the successor `links.charges` and `links.insolvency` are URL strings. Whether the register includes the key only when the resource has content is not stated in the Swagger. A live response is needed to confirm that key presence is a reliable signal; if it is not, call the endpoint and treat a 404 as "none".
