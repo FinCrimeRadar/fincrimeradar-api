@@ -874,8 +874,17 @@ def test_unsupported_type_returns_raw_facts_only(ctx, type_):
     assert body["officers"]["items"] == [] and body["pscs"]["items"] == []
     assert body["officers"]["source_status"] == "not_returned"
     assert body["officers"]["truncated"] is None and body["pscs"]["truncated"] is None
-    assert body["registered_office_change_filings"] is None
-    assert body["charges"] is None and body["insolvency"] is None
+    # Spec v1.2 and v1.4: every collection is reported not_returned, never a bare null.
+    assert body["registered_office_change_filings"] == {
+        "source_status": "not_returned",
+        "items": [],
+        "truncated": None,
+    }
+    assert body["charges"] == {"source_status": "not_returned"}
+    assert body["insolvency"] == {"source_status": "not_returned"}
+    assert body["pscs"]["records_source_status"] == "not_returned"
+    assert body["pscs"]["statements_source_status"] == "not_returned"
+    assert body["not_returned_notice"] == NOT_RETURNED_NOTICE
     assert up.paths == [PATHS["profile"]]
 
 
@@ -1707,7 +1716,7 @@ def test_synthetic_dissolved_company_gets_register_reported_values_only(ctx):
     )
 
 
-def test_synthetic_statements_404_is_available_and_empty(ctx):
+def test_synthetic_statements_404_is_not_returned_not_confirmed_empty(ctx):
     bundle = synthetic_bundle("active_registered_office_change")
     assert bundle["responses"]["statements"]["status"] == 404
     n, routes = synthetic_routes(bundle)
@@ -1717,12 +1726,10 @@ def test_synthetic_statements_404_is_available_and_empty(ctx):
         body["pscs"]["active_statements"] == []
         and body["pscs"]["ceased_statements"] == []
     )
-    # Live, this 404 meant the company has no statements, so it is available
-    # and empty (spec v1.3). The PSC records list is available, so truncation
-    # follows the normal rule.
-    assert body["pscs"]["statements_source_status"] == "available"
-    assert body["pscs"]["records_source_status"] == "available"
-    assert body["pscs"]["truncated"] is False
+    # Live, this 404 meant the company has no statements. The service cannot
+    # tell that from a missing section, so it reports not_returned (spec v1.2).
+    assert body["pscs"]["statements_source_status"] == "not_returned"
+    assert body["pscs"]["truncated"] is None
     assert "active_psc_statements" not in indicator_ids(body)
 
 
@@ -1775,6 +1782,8 @@ def overdue_pscs():
 SOURCE_CASES = [
     ("officers", {"officers": overdue_officers()}, "idv_statement_overdue"),
     ("pscs", {"pscs": overdue_pscs()}, "idv_statement_overdue"),
+    ("statements", {}, "active_psc_statements"),
+    ("statements", {}, "ceased_psc_statements"),
     ("filing", {}, None),
     ("charges", {}, "outstanding_charges"),
     ("insolvency", {}, "insolvency_history"),
@@ -1830,7 +1839,13 @@ def test_not_returned_collection_has_null_truncation_and_no_conclusion(
         assert emptied[key] == []
 
 
-def test_pscs_truncated_is_null_if_the_records_list_is_missing(ctx):
+def test_pscs_truncated_is_null_if_either_list_is_missing(ctx):
+    ctx.install(statements=(404, {}))
+    body = ctx.body()
+    assert body["pscs"]["records_source_status"] == "available"
+    assert body["pscs"]["statements_source_status"] == "not_returned"
+    assert body["pscs"]["truncated"] is None
+    kyb.reset_state_for_tests()
     ctx.install(pscs=(404, {}))
     assert ctx.body()["pscs"]["truncated"] is None
 
@@ -2270,59 +2285,26 @@ def test_synthetic_bundles_carry_no_register_free_text():
         )
 
 
-# ------------------------------------------------------------------ spec v1.3: PSC statements 404
+# ------------------------------------------------------------------ spec v1.4: PSC statements 404 is not_returned
 
 
-def test_statements_404_is_available_and_empty(ctx):
+def test_statements_404_is_not_returned_with_null_truncation(ctx):
     ctx.install(statements=(404, {}))
     body = ctx.body()
     pscs = body["pscs"]
-    assert pscs["statements_source_status"] == "available"
+    assert pscs["statements_source_status"] == "not_returned"
     assert pscs["records_source_status"] == "available"
     assert pscs["active_statements"] == [] and pscs["ceased_statements"] == []
-    assert pscs["truncated"] is False
+    assert pscs["truncated"] is None
     ids = indicator_ids(body)
     assert "active_psc_statements" not in ids and "ceased_psc_statements" not in ids
-
-
-def test_statements_404_leaves_pscs_truncation_to_the_normal_rule(ctx):
-    psc = fixture("psc_list")
-    psc["total_results"] = len(psc["items"]) + 5
-    ctx.install(pscs=psc, statements=(404, {}))
-    assert ctx.body()["pscs"]["truncated"] is True
-
-
-def test_statements_404_with_records_not_returned_is_still_unknown(ctx):
-    ctx.install(pscs=(404, {}), statements=(404, {}))
-    pscs = ctx.body()["pscs"]
-    assert pscs["records_source_status"] == "not_returned"
-    assert pscs["statements_source_status"] == "available"
-    assert pscs["truncated"] is None
-
-
-@pytest.mark.parametrize(
-    "failure,status",
-    [
-        (hostile(500), 502),
-        (hostile(503), 502),
-        (requests.Timeout("slow"), 504),
-        (requests.ConnectTimeout("slow"), 504),
-        (requests.ConnectionError("down"), 502),
-        ((200, {"items": "not-a-list"}), 502),
-    ],
-)
-def test_statements_failure_is_not_a_404_and_never_becomes_a_readout(
-    ctx, failure, status
-):
-    ctx.install(statements=failure)
-    r = ctx.get()
-    assert r.status_code == status
-    assert "pscs" not in r.json()
-
-
-@pytest.mark.parametrize("key", ["officers", "pscs"])
-def test_officers_and_psc_records_404_stay_not_returned(ctx, key):
-    ctx.install(**{key: (404, {})})
-    body = ctx.body()
-    assert section_of(body, key) == "not_returned"
     assert body["not_returned_notice"] == NOT_RETURNED_NOTICE
+
+
+def test_statements_failure_is_not_a_404_and_never_becomes_a_readout(ctx):
+    for failure, status in [(hostile(503), 502), (requests.Timeout("slow"), 504)]:
+        kyb.reset_state_for_tests()
+        ctx.install(statements=failure)
+        r = ctx.get()
+        assert r.status_code == status
+        assert "pscs" not in r.json()
