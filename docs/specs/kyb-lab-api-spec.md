@@ -1,6 +1,6 @@
 # Companies House KYB Investigation Lab: API phase 1 specification
 
-Status: v1.8 (one derivation rule in 5.2, plus the v1.7 test procedure), for the combined post-merge Codex review due 18 October 2026. v1.4: v1.3 withdrawn per Codex PR review 2 (404 not documented as empty); revisit only with Companies House documentation. Base: FROZEN v1.0 (Codex section 7 review PASSED, reviews 1 to 3), v1.1 filing truncation, the v1.2 remediation of Codex PR review 1 (`kyb-lab-codex-pr-review-1.md`), and the v1.4 remediation of Codex PR review 2 (`kyb-lab-codex-pr-review-2.md`). Any spec change needs a new review.
+Status: v1.8, Codex post-merge review PASSED 11 Oct 2026. v1.4: v1.3 withdrawn per Codex PR review 2 (404 not documented as empty); revisit only with Companies House documentation. Base: FROZEN v1.0 (Codex section 7 review PASSED, reviews 1 to 3), v1.1 filing truncation, the v1.2 remediation of Codex PR review 1 (`kyb-lab-codex-pr-review-1.md`), and the v1.4 remediation of Codex PR review 2 (`kyb-lab-codex-pr-review-2.md`). Any spec change needs a new review.
 Author: Claude (chat), 10 October 2026. Implementation owner: Claude Code. Independent review: Codex, outside Claude Code.
 Tier: CLAUDE.md section 15 high stakes (new API endpoint, trust boundary, third party data, personal data).
 
