@@ -1,6 +1,6 @@
 # Companies House KYB Investigation Lab: API phase 1 specification
 
-Status: DRAFT for approval. Not READY until the gates in section 1 are complete.
+Status: DRAFT v2 (11 October 2026), amended after Codex adversarial review 1 returned FAIL. Not READY until the gates in section 1 are complete.
 Author: Claude (chat), 10 October 2026. Implementation owner: Claude Code. Independent review: Codex, outside Claude Code.
 Tier: CLAUDE.md section 15 high stakes (new API endpoint, trust boundary, third party data, personal data).
 
@@ -45,11 +45,45 @@ Every other field name used below was checked against the official Companies Hou
 2. If the value is purely numeric and shorter than eight digits, left pad with zeros to eight.
 3. Accept only `^[A-Z0-9]{8}$`. Everything else returns 422 with a generic message. No echo of the raw input in the response or logs.
 
+### Scope of interpretation
+
+Phase 1 interprets only UK-registered companies and limited liability partnerships. Scope is decided from the profile `type`, using an allowlist built from the `company_type` mapping in `constants.yml` of `companieshouse/api-enumerations`, pinned to commit `05067abc50da2c9277bb5d3504187f55e5ec9e24`. Any `type` not on the allowlist is unsupported, including a value that appears in neither the Swagger nor the pinned constants.
+
+In scope (8 types, all present in both the Swagger `companyProfile.type` enum and the pinned constants):
+
+| `type` | Register description (constants) |
+| --- | --- |
+| `ltd` | Private limited company |
+| `plc` | Public limited company |
+| `private-unlimited` | Private unlimited company |
+| `private-unlimited-nsc` | Private unlimited company without share capital |
+| `private-limited-guarant-nsc` | Private limited by guarantee without share capital |
+| `private-limited-guarant-nsc-limited-exemption` | Private limited company by guarantee without share capital, use of 'Limited' exemption |
+| `private-limited-shares-section-30-exemption` | Private limited company, use of 'Limited' exemption |
+| `llp` | Limited liability partnership |
+
+Excluded (28 types, every other value in the pinned `company_type` mapping), with the reason each is excluded:
+
+| `type` | Reason |
+| --- | --- |
+| `registered-overseas-entity`, `uk-establishment`, `oversea-company` | Overseas or foreign structures, excluded by decision |
+| `limited-partnership`, `scottish-partnership` | Partnerships that are neither companies nor LLPs |
+| `eeig`, `eeig-establishment`, `ukeig` | Economic interest groupings, not companies |
+| `icvc-securities`, `icvc-warrant`, `icvc-umbrella`, `investment-company-with-variable-capital` | Investment vehicles with a separate regulatory regime |
+| `registered-society-non-jurisdictional`, `industrial-and-provident-society`, `northern-ireland-other` | Societies and credit unions |
+| `royal-charter`, `charitable-incorporated-organisation`, `scottish-charitable-incorporated-organisation`, `further-education-or-sixth-form-college-corporation` | Bodies not incorporated under the Companies Acts |
+| `converted-or-closed` | Closed record, not a live company |
+| `old-public-company`, `northern-ireland`, `protected-cell-company`, `assurance-company`, `unregistered-company`, `other`, `european-public-limited-liability-company-se`, `united-kingdom-societas` | Cannot be placed in the UK company or LLP scope with confidence from the enumerations alone |
+
+An unsupported type returns the raw profile facts plus the notice "FinCrimeRadar does not interpret indicators for this entity type in phase 1". No indicators, no identity verification derivation, and no upstream calls after the profile (this conserves quota).
+
+For an in scope type, `company_status` is returned raw. There is no indicator derived from status. Current obligation outputs (`accounts_overdue`, `confirmation_statement_overdue` and every identity verification status) are derived only when `company_status == "active"`. For any other status, the readout shows the raw register values labelled "register-reported values; FinCrimeRadar does not interpret current obligations for status <status>", and no derived status or obligation indicator.
+
 ### Upstream calls
 
 Fixed base host `https://api.company-information.service.gov.uk`. The validated company number is the only variable inserted into a path. Never follow URLs or `links` values returned by the upstream API (SSRF control).
 
-1. Company profile. 404 upstream returns 404 to the client.
+1. Company profile. 404 upstream returns 404 to the client. If the `type` is unsupported, stop here.
 2. Officers list, one page, `items_per_page=100`. The Swagger and reference pages state no maximum page size, so 100 is a request, not a documented ceiling. Set `truncated: true` when `total_results` (`total_count` for filing history and charges) exceeds the number of items actually returned, so an upstream cap below 100 still produces an honest flag. No unbounded paging.
 3. PSC list and PSC statements list, same paging rule. The PSC list declares `items_per_page` and `start_index` as strings in the Swagger, so the upstream projection model coerces them to integers.
 4. Filing history, one page, `items_per_page=100`. Sort order is not documented, so do not rely on it: sort the returned items by `date` descending client side before deriving any indicator.
@@ -70,7 +104,7 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
 
 1. Company centric only. No officer search, no officer appointment lookups across companies, no endpoint that takes a person as input.
 2. Project upstream responses through Pydantic models that ignore unknown fields. Return only what the indicators need.
-3. Per officer and PSC return: name, role or kind, appointed or notified date, resigned or ceased date, derived verification status and its supporting dates. Do not return dates of birth, nationality, occupation, residential or correspondence addresses, or `preferred_name`.
+3. Per officer and PSC return: name, role or kind, appointed or notified date, resigned or ceased date, derived verification status (or `not_interpreted`) and its supporting dates. Do not return dates of birth, nationality, occupation, residential or correspondence addresses, or `preferred_name`.
 4. No persistence beyond the in-memory cache. No database writes.
 
 ## 4. Response shape
@@ -80,14 +114,37 @@ Timeouts: explicit connect and read timeouts on every upstream call. No retries 
   "company_number": "string",
   "retrieved_at": "ISO 8601 UTC",
   "source": "Companies House Public Data API",
-  "company": { name, status, type, incorporated_on, registered_office_changed_recently },  // registered_office_changed_recently is derived from filing history (section 6), not a profile field
+  "company": { name, status, type, date_of_creation },        // status and type returned raw
+  "interpretation": {
+    "scope": "interpreted" | "unsupported_entity_type",
+    "current_obligations": "interpreted" | "register_reported_only" | "not_applicable",
+    "notice": "string | null"
+  },
+  "register_reported_values": { ... } | null,                   // only when current_obligations is register_reported_only
   "indicators": [ Indicator ],
-  "officers": { "items": [...], "truncated": bool },
-  "pscs": { "items": [...], "statements": [...], "truncated": bool },
+  "officers": { "items": [ OfficerItem ], "events": [ DatedEvent ], "truncated": bool },
+  "pscs": { "items": [ PscItem ], "active_statements": [...], "ceased_statements": [...], "truncated": bool },
+  "registered_office_change_filings": [ { "date", "transaction_id", "description_identifier" } ] | null,   // PROVISIONAL
   "does_not_establish": [ "string" ],
   "attribution": "Source: Companies House public register, retrieved <retrieved_at>. FinCrimeRadar is not affiliated with or endorsed by Companies House."
 }
 ```
+
+`OfficerItem` and `PscItem` each carry `identity_verification`:
+
+```
+{
+  "applicability": "applicable" | "not_interpreted",
+  "status": "statement_supplied" | "statement_removed" | "statement_due" | "statement_overdue"
+          | "verification_data_conflict" | "no_statement_status_fields" | null,   // null when not_interpreted
+  "display": "string",
+  "evidence": { raw fields the register returned, minimised per section 3 },
+  "evidence_label": "string | null",
+  "does_not_establish": "string"
+}
+```
+
+`DatedEvent`: `{ "date", "event": "appointed" | "resigned", "name", "role" }`, built from the officers items, sorted by date descending. No "recent" flag, no window and no count of recent events anywhere in the response. Any future time window is an `frc_assessment` and needs separate review.
 
 `Indicator`:
 
@@ -108,49 +165,78 @@ No numeric score, weight, rank, or overall verdict anywhere in the response.
 
 ## 5. Identity verification derivation (Codex review required)
 
-Per current appointment (officer not resigned, PSC not ceased), derive exactly one status from `identity_verification_details`. The same table applies to officers and to PSCs:
+### 5.1 Applicability
 
-| Condition | Status |
-| --- | --- |
-| `appointment_verification_start_on` present and `appointment_verification_end_on` absent | `statement_supplied` |
-| `appointment_verification_end_on` present | `statement_removed` |
-| No start date, `appointment_verification_statement_due_on` present and on or after today (Europe/London) | `statement_due` |
-| No start date, due date present and before today | `statement_overdue` |
-| `identity_verification_details` absent, or none of the above fields present | `no_verification_data` |
+A status is derived only for a record that meets all of these:
+
+1. The company is in scope under section 3 and `company_status == "active"`.
+2. For an officer: the role is exactly `director`, `llp-member` or `llp-designated-member` (the natural-person roles), and `resigned_on` is absent.
+3. For a PSC: the kind is exactly `individual-person-with-significant-control`, and `ceased_on` is absent.
+
+Every other record gets `applicability: "not_interpreted"` and `status: null`. This includes every `corporate-*` role, every other officer role, every other PSC kind, every resigned or ceased record, and every record of a company that is out of scope or not active. If verification fields are present on a not_interpreted record, show them raw with the label "fields returned by the register; not interpreted in phase 1". A status is never derived for them.
+
+### 5.2 Derivation for applicable records
+
+"Today" is the date of `retrieved_at` in Europe/London. Evaluate in order. The first match wins.
+
+| Order | Condition | Status |
+| --- | --- | --- |
+| a | Any of: `appointment_verification_start_on` is after today; `appointment_verification_end_on` is after today; end is before start; end is present and start is absent | `verification_data_conflict` |
+| b | Start present, end absent | `statement_supplied` |
+| c | Start present, end present | `statement_removed` |
+| d | Start and end absent, `appointment_verification_statement_due_on` present and on or after today | `statement_due` |
+| e | Start and end absent, due present and before today | `statement_overdue` |
+| f | Start, end and due all absent | `no_statement_status_fields` |
+
+The same table applies to officers and to PSCs, using the fields in each record's `identity_verification_details`. There is no special case by officer role or PSC kind inside the derivation. Applicability in 5.1 is the only place role or kind matters.
 
 Rules:
 
 1. Use the per appointment due date from the API. Never hard code a transition end date. Secondary sources disagree on whether the transition ends on 17 or 18 November 2026, and the due date varies by appointment.
-2. `identity_verified_on` and the ACSP name are displayed as supporting evidence only when present. Their absence never lowers the status.
-3. `no_verification_data` is not the same as unverified. Display it as "no verification data returned by the register", not as a failure. Corporate officers and some appointment types fall outside the current regime.
-4. Wording must say the statement was supplied to the register. It must not say the person is "verified as legitimate", "cleared", or similar.
+2. On every status, show `identity_verified_on`, the ACSP name (`authorised_corporate_service_provider_name`) and `anti_money_laundering_supervisory_bodies` when present, as evidence only. They never change the status, and their absence never lowers it.
+3. Show `appointment_verification_statement_date` as "statement can be supplied from <date>". It never changes the status.
+4. Never use `identity_verified_on` as a verified flag. It is populated only for verification through an authorised corporate service provider.
 
-PSC rules:
+### 5.3 Display wording
 
-5. The derivation table is applied to PSCs unchanged, using `appointment_verification_start_on`, `appointment_verification_end_on` and `appointment_verification_statement_due_on` from the PSC `identity_verification_details`.
-6. `appointment_verification_statement_date` is supporting evidence only, displayed as "statement can be supplied from <date>". It never changes the derived status.
-7. One derivation applies to every officer and every PSC kind (individual, corporate entity, legal person, beneficial owner and super secure kinds alike). There is no special case by kind. The status depends only on which fields are present in whatever `identity_verification_details` the register returns. A PSC kind whose model carries no verification fields in the Public Data API (corporate entity and legal person detail models) will therefore derive to `no_verification_data` because the fields are absent, not because of its kind. A PSC of any kind that does carry the fields derives normally.
+| Status | Display text |
+| --- | --- |
+| `statement_supplied` | "The register records that an identity verification statement was supplied for this role on <date>, linking a verified identity to it." (`<date>` is `appointment_verification_start_on`) |
+| `statement_removed` | "The register records that the verification statement for this role was removed on <date>." (`<date>` is `appointment_verification_end_on`) |
+| `verification_data_conflict` | "The register returned verification dates that are inconsistent or incomplete. FinCrimeRadar does not interpret them; check the register record directly." |
+| `no_statement_status_fields` | "No verification statement dates were returned for this role. This does not establish whether the person is verified, unverified, compliant, non-compliant or outside scope." |
+| `statement_due` | DRAFT, not specified by the review: "The register records <date> as the date by which an identity verification statement must be supplied for this role. No statement has been recorded." |
+| `statement_overdue` | DRAFT, not specified by the review: "The register records <date> as the date by which an identity verification statement must be supplied for this role. That date has passed and no statement has been recorded." |
 
-Fixed `does_not_establish` text for this indicator (final wording subject to Codex review): "A supplied verification statement means the individual's identity was verified for this appointment. It does not establish who ultimately owns or controls the company, whether the ownership filings are accurate, the source of funds, or that customer due diligence is complete."
+The two DRAFT rows are Claude's wording and need the same Codex review as the rest of this section.
+
+Per record `does_not_establish`: "A register record of a supplied statement is not evidence that the person, the company or its activity is legitimate. It does not establish who ultimately owns or controls the company, whether ownership filings are accurate, the source of funds, or that customer due diligence is complete."
 
 ## 6. Indicators, phase 1
 
-Report facts and counts only. No thresholds unless a verified source supplies one.
+Report facts only. No thresholds, windows or counts of "recent" events. Indicators are produced only for in scope entity types. Indicators marked (active only) are produced only when `company_status == "active"`.
 
 | id | Evidence state | Basis |
 | --- | --- | --- |
-| `company_status_not_active` | register_fact | profile status |
-| `accounts_overdue` | register_fact | profile accounts overdue flag |
-| `confirmation_statement_overdue` | register_fact | profile confirmation statement overdue flag |
-| `idv_statement_overdue` | register_fact | any current appointment with `statement_overdue` |
-| `idv_statement_removed` | register_fact | any current appointment with `statement_removed` |
-| `psc_statement_present` | register_fact | PSC statements list non empty; display the statement description from the Companies House enumeration file, never paraphrased |
-| `recent_officer_changes` | register_fact | counts of appointments and resignations in the last 12 months, shown as numbers with no "high churn" label |
-| `recent_registered_office_change` (PROVISIONAL) | register_fact | filings in the last 12 months where `category == "address"` AND `description` exactly equals one of the six registered office description identifiers below. See the provisional rule after this table. |
+| `accounts_overdue` (active only) | register_fact | profile `accounts.overdue` is true |
+| `confirmation_statement_overdue` (active only) | register_fact | profile `confirmation_statement.overdue` is true |
+| `idv_statement_overdue` (active only) | register_fact | any applicable record derived to `statement_overdue` |
+| `idv_statement_removed` (active only) | register_fact | any applicable record derived to `statement_removed` |
+| `active_psc_statements` | register_fact | PSC statements with no `ceased_on`; show each statement description verbatim from the enumerations |
+| `ceased_psc_statements` | register_fact | PSC statements with `ceased_on`; show each description verbatim and the ceased date |
 | `previous_names` | register_fact | profile previous names with dates |
 | `insolvency_history` | register_fact | insolvency resource present |
-| `outstanding_charges` | register_fact | charges with outstanding status |
-| `recently_incorporated` | register_fact | incorporated within the last 12 months, date shown |
+| `outstanding_charges` | register_fact | charges with status `outstanding` |
+
+Company status is not an indicator. It is returned raw in `company.status`.
+
+PSC statement descriptions: the profile `statement` code maps to the `statement_description` table in `psc_descriptions.yml` at the pinned commit. Show the enumeration text verbatim, substituting only the `{linked_psc_name}` placeholder where the text contains it. For a code not in the table, show the raw code and no description. Never paraphrase.
+
+Dated lists returned instead of thresholds (all in the response, none with a flag):
+
+1. `officers.events`: appointments and resignations with dates.
+2. `registered_office_change_filings`: filings where `category == "address"` AND `description` exactly equals one of the six identifiers below, with their dates. PROVISIONAL, see the rule below.
+3. `company.date_of_creation`.
 
 Registered office description identifiers (from `filing_history_descriptions.yml` in `companieshouse/api-enumerations`, pinned commit `05067abc50da2c9277bb5d3504187f55e5ec9e24`, lines 902 to 907 at that commit):
 
@@ -165,14 +251,16 @@ Each of the six was checked in `filing_history_descriptions.yml` at the pinned c
 
 Excluded identifiers, none of which is a registered office change: the register inspection address variants (`change-sail-address-company...`, `change-sail-address-limited-liability-partnership...`, which render as "Register inspection address has been changed" or "Location of register of charges has been changed"), the register move variants (`move-registers-to-sail-...`, `move-registers-to-registered-office-...`), the registered office situation variants (`change-registered-office-situation-...`, a change of jurisdiction), and `change-registered-office-addres-overseas-company` (sic), which means a place of business address change.
 
-Provisional rule: the Swagger types `filingHistoryItem.description` as a plain string and the filing `type` as an unconstrained string, so no OpenAPI document confirms that live responses carry these identifiers. If the first live response shows `description` as rendered text instead of the identifier, disable this indicator and report. Never fall back to category only matching: `category == "address"` also covers filings that are not registered office changes.
+Provisional rule: the Swagger types `filingHistoryItem.description` as a plain string and the filing `type` as an unconstrained string, so no OpenAPI document confirms that live responses carry these identifiers. If the first live response shows `description` as rendered text instead of the identifier, disable the `registered_office_change_filings` list (return null) and report. Never fall back to category only matching: `category == "address"` also covers filings that are not registered office changes.
 
-Global `does_not_establish` list, grounded in the Companies House disclaimer:
+Global `does_not_establish` list (returned verbatim):
 
-1. The register is not comprehensive and Companies House does not closely review every document at registration.
-2. Accounts filed at Companies House receive only basic checks.
-3. Absence of an indicator is not evidence that the company is low risk.
-4. This readout is not customer due diligence and does not replace it.
+1. The register is not comprehensive and may contain inaccuracies, errors or omissions. Companies House accepts no responsibility for their consequences.
+2. Companies House checks filings for completeness and validity but does not closely review every document. Accounts receive only basic checks.
+3. Register status does not establish that a company is trading. Dormant accounts are a separate filing fact.
+4. Identity verification records do not establish legitimacy, ownership accuracy or completed CDD.
+5. The absence of an indicator is not evidence of low risk.
+6. This readout is not customer due diligence and does not replace it.
 
 `frc_assessment` indicators are out of scope for phase 1. Add them only in a later, separately reviewed change.
 
@@ -183,18 +271,30 @@ Structured log per request: request id, normalised company number (a public iden
 ## 8. Tests (pytest, mocked upstream, existing CI workflow)
 
 1. Validation: valid eight digit, short numeric padded, prefixed forms such as `SC123456`, lowercase normalised, rejects path traversal, URL encoded input, empty, overlong, unicode.
-2. Each indicator fires and does not fire, from fixture responses.
-3. Section 5 derivation: one test per table row, plus `identity_verified_on` absent with start date present returns `statement_supplied`, plus resigned officers excluded, plus today boundary in Europe/London.
-4. Data minimisation: response never contains date of birth, nationality, occupation, address or preferred name keys, asserted recursively.
-5. Upstream failure: 404, 401 (bad key returns 503 without leaking detail), 429 (stops calls, 503 with Retry-After), 5xx, timeout.
-6. Missing key fails closed with 503.
-7. Global budget and per IP limit enforced. Cache hit makes zero upstream calls.
-8. Truncation flag set when totals exceed returned items.
-9. Links in upstream responses are never fetched (assert the HTTP client is called only with expected paths).
-10. PSC derivation: the table rows apply to an individual PSC; `appointment_verification_statement_date` never changes status; one fixture per PSC kind in the Swagger kind enum (individual, corporate entity, legal person, super secure, and each beneficial owner kind) with no verification fields, each asserting `no_verification_data`; and one non-individual fixture (corporate entity) that carries the verification fields, asserting it derives normally. The code under test must contain no branch on PSC kind.
-11. Registered office indicator: fires for each of the six identifiers, does not fire for category `address` with any other description, does not fire for the overseas company identifier, and is disabled cleanly when `description` is rendered text.
-12. Client IP helper (`tests/test_client_ip.py`): Nth-from-right selection, `TRUSTED_PROXY_HOPS` parsing and default, spoofed prepended entries do not change the key, fallback to `request.client.host` when the header is missing or too short.
-13. Filing history is sorted by `date` client side regardless of upstream order; PSC string paging fields are coerced; `truncated` is set from totals versus items returned.
+2. Each indicator in section 6 fires and does not fire, from fixture responses.
+3. Identity verification derivation, one test per rule:
+   - 8a: one test for each of the four conflict triggers (start after today; end after today; end before start; end present and start absent), each asserting `verification_data_conflict`, plus a test that conflict wins over a start and end that would otherwise match 8b or 8c
+   - 8b `statement_supplied` (start present, end absent), including with `identity_verified_on` absent
+   - 8c `statement_removed`
+   - 8d `statement_due`, plus a test that a due date equal to today still derives `statement_due`
+   - 8e `statement_overdue`
+   - 8f `no_statement_status_fields`, plus a test with ACSP fields only, asserting `no_statement_status_fields` with the ACSP evidence shown
+   - the today boundary in Europe/London, including a `retrieved_at` instant near midnight UTC in British Summer Time
+   - `appointment_verification_statement_date` is shown as "statement can be supplied from <date>" and never changes the status
+4. Applicability: natural-person officer roles `director`, `llp-member` and `llp-designated-member` derive; a resigned officer is `not_interpreted`; a corporate officer (for example `corporate-director`) carrying verification fields is `not_interpreted` with the raw fields shown and the label "fields returned by the register; not interpreted in phase 1"; every other officer role is `not_interpreted`. For PSCs: `individual-person-with-significant-control` derives; a ceased PSC is `not_interpreted`; one fixture per other PSC kind in the Swagger kind enum with no verification fields asserts `not_interpreted`; one non-individual fixture that carries the fields asserts `not_interpreted` with the raw fields shown and no derived status.
+5. Scope: one test per excluded `type` in section 3 asserting the notice, the raw profile facts, no indicators, no identity verification derivation and no upstream calls after the profile; an unknown `type` value is treated as unsupported; each of the eight in scope types is interpreted.
+6. Status: a dissolved company returns raw `company.status`, no `accounts_overdue` or `confirmation_statement_overdue` indicator, no identity verification status on any record, and `register_reported_values` carrying the label "register-reported values; FinCrimeRadar does not interpret current obligations for status dissolved". No `company_status_not_active` indicator exists for any status.
+7. PSC statements: a statement without `ceased_on` appears only under `active_statements` and fires `active_psc_statements`; a ceased only statement list produces no active statements and fires only `ceased_psc_statements`; descriptions are verbatim from the pinned enumerations; an unknown statement code shows the raw code.
+8. Dated lists: `officers.events` contains appointments and resignations with dates in descending order and no "recent" flag or count anywhere in the response; `company.date_of_creation` is returned; `registered_office_change_filings` fires for each of the six identifiers, excludes category `address` with any other description, excludes the SAIL, move registers, situation and overseas identifiers, and returns null when `description` is rendered text.
+9. Global `does_not_establish` equals the six items in section 6, verbatim.
+10. Data minimisation: response never contains date of birth, nationality, occupation, address or preferred name keys, asserted recursively.
+11. Upstream failure: 404, 401 (bad key returns 503 without leaking detail), 429 (stops calls, 503 with Retry-After), 5xx, timeout.
+12. Missing key fails closed with 503.
+13. Global budget and per IP limit enforced. Cache hit makes zero upstream calls.
+14. Truncation flag set when totals exceed returned items.
+15. Links in upstream responses are never fetched (assert the HTTP client is called only with expected paths).
+16. Client IP helper (`tests/test_client_ip.py`): Nth-from-right selection, `TRUSTED_PROXY_HOPS` parsing and default, spoofed prepended entries do not change the key, fallback to `request.client.host` when the header is missing or too short.
+17. Filing history is sorted by `date` client side regardless of upstream order; PSC string paging fields are coerced.
 
 ## 9. Delivery sequence
 
