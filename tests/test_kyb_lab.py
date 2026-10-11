@@ -1628,6 +1628,7 @@ SYNTHETIC = [
     "active_ltd_outstanding_charges",
     "dissolved",
     "active_registered_office_change",
+    "open_ended_verification",
 ]
 SYNTHETIC_KEYS = {
     "profile": "profile",
@@ -2333,3 +2334,104 @@ def test_1000_random_addresses_in_one_slash_64_share_one_limit(ctx):
     assert codes[:10] == [200] * 10
     assert set(codes[10:]) == {429}
     assert list(kyb._ip_log) == ["2001:db8:1:2::/64"]
+
+
+# ------------------------------------------------------------------ spec v1.8: open ended verification end date
+
+START = "2026-06-17"
+
+
+@pytest.mark.parametrize("is_psc", [False, True])
+def test_end_9999_12_31_with_start_is_statement_supplied(is_psc):
+    d = D(
+        appointment_verification_start_on=START,
+        appointment_verification_end_on="9999-12-31",
+    )
+    assert derive_idv_status(d, is_psc=is_psc, today=TODAY) == "statement_supplied"
+
+
+@pytest.mark.parametrize("is_psc", [False, True])
+def test_end_9999_12_31_without_start_is_not_a_conflict(is_psc):
+    d = D(appointment_verification_end_on="9999-12-31")
+    assert (
+        derive_idv_status(d, is_psc=is_psc, today=TODAY) == "no_statement_status_fields"
+    )
+
+
+def test_end_9999_12_31_without_start_falls_through_to_the_due_rows():
+    due_future = D(
+        appointment_verification_end_on="9999-12-31",
+        appointment_verification_statement_due_on="2026-12-01",
+    )
+    due_past = D(
+        appointment_verification_end_on="9999-12-31",
+        appointment_verification_statement_due_on="2026-09-01",
+    )
+    assert derive_idv_status(due_future, is_psc=False, today=TODAY) == "statement_due"
+    assert derive_idv_status(due_past, is_psc=False, today=TODAY) == "statement_overdue"
+
+
+def test_open_ended_end_does_not_trigger_the_due_after_end_conflict():
+    d = D(
+        appointment_verification_start_on=START,
+        appointment_verification_end_on="9999-12-31",
+        appointment_verification_statement_due_on="2026-12-01",
+    )
+    assert derive_idv_status(d, is_psc=False, today=TODAY) == "statement_supplied"
+
+
+@pytest.mark.parametrize("is_psc", [False, True])
+def test_other_future_end_dates_stay_a_conflict(is_psc):
+    for end in ("2099-01-01", "9999-12-30", "9999-01-01", "2026-10-12"):
+        d = D(
+            appointment_verification_start_on=START, appointment_verification_end_on=end
+        )
+        assert (
+            derive_idv_status(d, is_psc=is_psc, today=TODAY)
+            == "verification_data_conflict"
+        ), end
+
+
+def test_end_before_start_is_still_a_conflict():
+    d = D(
+        appointment_verification_start_on="2026-05-01",
+        appointment_verification_end_on="2026-04-01",
+    )
+    assert (
+        derive_idv_status(d, is_psc=False, today=TODAY) == "verification_data_conflict"
+    )
+
+
+def test_future_start_with_open_ended_end_is_still_a_conflict():
+    d = D(
+        appointment_verification_start_on="2026-10-12",
+        appointment_verification_end_on="9999-12-31",
+    )
+    assert (
+        derive_idv_status(d, is_psc=False, today=TODAY) == "verification_data_conflict"
+    )
+
+
+def test_open_ended_end_replay_and_raw_evidence(ctx):
+    n, routes = synthetic_routes(synthetic_bundle("open_ended_verification"))
+    ctx.install(routes=routes)
+    body = ctx.body(n)
+    got = {o["name"]: o["identity_verification"] for o in body["officers"]["items"]}
+    assert got["PERSON A"]["status"] == "statement_supplied"
+    assert got["PERSON B"]["status"] == "no_statement_status_fields"
+    assert got["PERSON D"]["status"] == "verification_data_conflict"
+    assert got["PERSON E"]["status"] == "verification_data_conflict"
+    assert (
+        body["pscs"]["items"][0]["identity_verification"]["status"]
+        == "statement_supplied"
+    )
+    # The register value is still shown exactly as returned.
+    assert (
+        got["PERSON A"]["evidence"]["appointment_verification_end_on"] == "9999-12-31"
+    )
+    assert got["PERSON A"]["display"] == (
+        "The register records that an identity verification statement was supplied "
+        f"for this role on {START}, linking a verified identity to it."
+    )
+    ids = indicator_ids(body)
+    assert "idv_statement_removed" not in ids and "idv_statement_overdue" not in ids
