@@ -1,0 +1,291 @@
+{
+  "company_number": "ZZ000002",
+  "synthetic": true,
+  "responses": {
+    "profile": {
+      "status": 200,
+      "body": {
+        "accounts": {
+          "accounting_reference_date": {
+            "day": "31",
+            "month": "07"
+          },
+          "last_accounts": {
+            "made_up_to": "2025-07-08",
+            "period_end_on": "2025-07-08",
+            "period_start_on": "2024-06-16",
+            "type": "micro-entity"
+          },
+          "next_accounts": {
+            "due_on": "2027-04-07",
+            "overdue": false,
+            "period_end_on": "2026-07-08",
+            "period_start_on": "2025-07-09"
+          },
+          "next_due": "2027-04-07",
+          "next_made_up_to": "2026-07-08",
+          "overdue": false
+        },
+        "can_file": true,
+        "company_name": "SYNTHETIC COMPANY 2 LIMITED",
+        "company_number": "ZZ000002",
+        "company_status": "active",
+        "confirmation_statement": {
+          "last_made_up_to": "2026-06-15",
+          "next_due": "2027-06-29",
+          "next_made_up_to": "2027-06-15",
+          "overdue": false
+        },
+        "date_of_creation": "2024-06-16",
+        "etag": "bbd342aedcc97a646ded23a50cf05915c579070b",
+        "has_charges": false,
+        "has_insolvency_history": false,
+        "jurisdiction": "england-wales",
+        "links": {
+          "persons_with_significant_control": "/company/ZZ000002/persons-with-significant-control",
+          "self": "/company/ZZ000002",
+          "charges": "/company/ZZ000002/charges",
+          "filing_history": "/company/ZZ000002/filing-history",
+          "officers": "/company/ZZ000002/officers"
+        },
+        "registered_office_address": {
+          "address_line_1": "REDACTED",
+          "country": "United Kingdom",
+          "locality": "REDACTED",
+          "postal_code": "REDACTED"
+        },
+        "registered_office_is_in_dispute": false,
+        "sic_codes": [
+          "68209"
+        ],
+        "type": "ltd",
+        "undeliverable_registered_office_address": false,
+        "has_super_secure_pscs": false
+      }
+    },
+    "officers": {
+      "status": 200,
+      "body": {
+        "active_count": 2,
+        "etag": "da7d63c6f71ecb0cedc00f423b366b56c52e17a5",
+        "items_per_page": 100,
+        "kind": "officer-list",
+        "links": {
+          "self": "/company/ZZ000002/officers"
+        },
+        "resigned_count": 0,
+        "inactive_count": 0,
+        "start_index": 0,
+        "total_results": 2,
+        "items": [
+          {
+            "name": "PERSON A",
+            "officer_role": "director",
+            "appointed_on": "2024-06-16",
+            "identity_verification_details": {
+              "appointment_verification_end_on": "9999-12-08",
+              "appointment_verification_start_on": "2026-06-17"
+            }
+          },
+          {
+            "name": "PERSON B",
+            "officer_role": "director",
+            "appointed_on": "2024-06-16",
+            "identity_verification_details": {
+              "appointment_verification_end_on": "9999-12-08",
+              "appointment_verification_start_on": "2026-06-17"
+            }
+          }
+        ]
+      }
+    },
+    "pscs": {
+      "status": 200,
+      "body": {
+        "items_per_page": 100,
+        "start_index": 0,
+        "total_results": 2,
+        "active_count": 2,
+        "ceased_count": 0,
+        "links": {
+          "self": "/company/ZZ000002/persons-with-significant-control"
+        },
+        "items": [
+          {
+            "name": "PERSON C",
+            "kind": "individual-person-with-significant-control",
+            "notified_on": "2024-06-16",
+            "ceased": false,
+            "natures_of_control": [
+              "ownership-of-shares-25-to-50-percent",
+              "voting-rights-25-to-50-percent",
+              "right-to-appoint-and-remove-directors"
+            ],
+            "identity_verification_details": {
+              "appointment_verification_end_on": "9999-12-08",
+              "appointment_verification_start_on": "2026-06-16"
+            }
+          },
+          {
+            "name": "PERSON D",
+            "kind": "individual-person-with-significant-control",
+            "notified_on": "2024-06-16",
+            "ceased": false,
+            "natures_of_control": [
+              "ownership-of-shares-25-to-50-percent",
+              "voting-rights-25-to-50-percent",
+              "right-to-appoint-and-remove-directors"
+            ],
+            "identity_verification_details": {
+              "appointment_verification_end_on": "9999-12-08",
+              "appointment_verification_start_on": "2026-06-16"
+            }
+          }
+        ]
+      }
+    },
+    "statements": {
+      "status": 404,
+      "body": null
+    },
+    "filing": {
+      "status": 200,
+      "body": {
+        "filing_history_status": "filing-history-available",
+        "items": [
+          {
+            "action_date": "2026-06-15",
+            "category": "confirmation-statement",
+            "date": "2026-06-17",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000001",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2025-08-31",
+            "category": "mortgage",
+            "date": "2025-09-14",
+            "description": "mortgage-create-with-deed-with-charge-number-charge-creation-date",
+            "pages": 4,
+            "subcategory": "create",
+            "transaction_id": "SYNTH000002",
+            "type": "MR01"
+          },
+          {
+            "action_date": "2025-07-08",
+            "category": "accounts",
+            "date": "2025-08-05",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 3,
+            "transaction_id": "SYNTH000003",
+            "type": "AA"
+          },
+          {
+            "action_date": "2025-06-15",
+            "category": "confirmation-statement",
+            "date": "2025-06-27",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000004",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2025-01-08",
+            "category": "mortgage",
+            "date": "2025-01-28",
+            "description": "mortgage-create-with-deed-with-charge-number-charge-creation-date",
+            "pages": 4,
+            "subcategory": "create",
+            "transaction_id": "SYNTH000005",
+            "type": "MR01"
+          },
+          {
+            "category": "incorporation",
+            "date": "2024-06-16",
+            "description": "incorporation-company",
+            "pages": 14,
+            "transaction_id": "SYNTH000006",
+            "type": "NEWINC"
+          }
+        ],
+        "items_per_page": 100,
+        "start_index": 0,
+        "total_count": 6
+      }
+    },
+    "charges": {
+      "status": 200,
+      "body": {
+        "etag": "017cc49458011e0738a4a47e2f0908774d3da4c9",
+        "items": [
+          {
+            "charge_code": "ZZ0000020002",
+            "charge_number": 2,
+            "classification": {
+              "description": "A registered charge",
+              "type": "charge-description"
+            },
+            "created_on": "2025-08-31",
+            "delivered_on": "2025-09-14",
+            "etag": "f2dc38e7a16d646afd433a7e109f59244f1057e1",
+            "particulars": {
+              "contains_negative_pledge": true,
+              "description": "SYNTHETIC PARTICULARS OF CHARGE.",
+              "type": "brief-description"
+            },
+            "persons_entitled": [
+              {
+                "name": "CHARGEE A"
+              }
+            ],
+            "status": "outstanding",
+            "transactions": [
+              {
+                "delivered_on": "2025-09-14",
+                "filing_type": "create-charge-with-deed",
+                "links": {
+                  "filing": "/company/ZZ000002/filing-history/SYNTH000002"
+                }
+              }
+            ]
+          },
+          {
+            "charge_code": "ZZ0000020001",
+            "charge_number": 1,
+            "classification": {
+              "description": "A registered charge",
+              "type": "charge-description"
+            },
+            "created_on": "2025-01-08",
+            "delivered_on": "2025-01-28",
+            "etag": "e9f539034edd27c89c9b5a1110064760a5131941",
+            "particulars": {
+              "description": "SYNTHETIC PARTICULARS OF CHARGE.",
+              "type": "brief-description"
+            },
+            "persons_entitled": [
+              {
+                "name": "CHARGEE A"
+              }
+            ],
+            "status": "outstanding",
+            "transactions": [
+              {
+                "delivered_on": "2025-01-28",
+                "filing_type": "create-charge-with-deed",
+                "links": {
+                  "filing": "/company/ZZ000002/filing-history/SYNTH000005"
+                }
+              }
+            ]
+          }
+        ],
+        "part_satisfied_count": 0,
+        "satisfied_count": 0,
+        "total_count": 2,
+        "unfiltered_count": 2
+      }
+    }
+  }
+}

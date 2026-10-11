@@ -1,0 +1,25 @@
+{
+  "items_per_page": 100,
+  "start_index": 0,
+  "total_results": 3,
+  "active_count": 1,
+  "ceased_count": 2,
+  "items": [
+    {
+      "statement": "psc-has-failed-to-confirm-changed-details",
+      "linked_psc_name": "SMITH, Alex",
+      "notified_on": "2024-02-02",
+      "kind": "persons-with-significant-control-statement"
+    },
+    {
+      "statement": "psc-exists-but-not-identified",
+      "notified_on": "2021-01-01",
+      "ceased_on": "2022-02-02"
+    },
+    {
+      "statement": "not-a-known-statement-code",
+      "notified_on": "2020-01-01",
+      "ceased_on": "2020-06-01"
+    }
+  ]
+}

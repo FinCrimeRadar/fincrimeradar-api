@@ -7,11 +7,13 @@ from screening import ScreeningEngine, AdverseMediaEngine, OPENSANCTIONS_API_KEY
 from routes_scenario_lab import router as scenario_lab_router
 from routes_guide_chat import router as guide_chat_router
 from routes_sar_sandbox import router as sar_sandbox_router, get_load_status as sar_sandbox_load_status
+from routes_kyb_lab import router as kyb_lab_router, health_fields as kyb_lab_health_fields
 
 app = FastAPI(title="FinCrimeRadar API", version="1.0.0")
 app.include_router(scenario_lab_router)
 app.include_router(guide_chat_router)
 app.include_router(sar_sandbox_router)
+app.include_router(kyb_lab_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -167,6 +169,7 @@ def health():
         "screening_backend": "opensanctions_api",
         "api_key_configured": bool(OPENSANCTIONS_API_KEY),
         "sar_sandbox": sar_sandbox_load_status(),
+        **kyb_lab_health_fields(),
     }
 
 @app.get("/api/status")

@@ -1,0 +1,162 @@
+{
+  "company_number": "ZZ000003",
+  "synthetic": true,
+  "responses": {
+    "profile": {
+      "status": 200,
+      "body": {
+        "accounts": {
+          "accounting_reference_date": {
+            "day": "31",
+            "month": "07"
+          }
+        },
+        "can_file": false,
+        "company_name": "SYNTHETIC COMPANY 3 LIMITED",
+        "company_number": "ZZ000003",
+        "company_status": "dissolved",
+        "date_of_cessation": "2025-11-13",
+        "date_of_creation": "2024-06-13",
+        "etag": "b1f616d190a9cb64987b65f99ebbeab9a1b9f862",
+        "has_charges": false,
+        "has_insolvency_history": false,
+        "jurisdiction": "england-wales",
+        "links": {
+          "persons_with_significant_control": "/company/ZZ000003/persons-with-significant-control",
+          "self": "/company/ZZ000003",
+          "filing_history": "/company/ZZ000003/filing-history",
+          "officers": "/company/ZZ000003/officers"
+        },
+        "registered_office_address": {
+          "address_line_1": "REDACTED",
+          "country": "United Kingdom",
+          "locality": "REDACTED",
+          "postal_code": "REDACTED",
+          "region": "REDACTED"
+        },
+        "registered_office_is_in_dispute": false,
+        "sic_codes": [
+          "68100"
+        ],
+        "type": "ltd",
+        "undeliverable_registered_office_address": false,
+        "has_super_secure_pscs": false
+      }
+    },
+    "officers": {
+      "status": 200,
+      "body": {
+        "active_count": 0,
+        "etag": "d27a32f1440b07c147ef9601bda0e4b76a1d58c8",
+        "items_per_page": 100,
+        "kind": "officer-list",
+        "links": {
+          "self": "/company/ZZ000003/officers"
+        },
+        "resigned_count": 0,
+        "inactive_count": 2,
+        "start_index": 0,
+        "total_results": 2,
+        "items": [
+          {
+            "name": "PERSON A",
+            "officer_role": "director",
+            "appointed_on": "2024-06-13",
+            "identity_verification_details": {
+              "appointment_verification_statement_due_on": "2025-10-02"
+            }
+          },
+          {
+            "name": "PERSON B",
+            "officer_role": "director",
+            "appointed_on": "2024-07-16",
+            "identity_verification_details": {
+              "appointment_verification_statement_due_on": "2025-10-02"
+            }
+          }
+        ]
+      }
+    },
+    "pscs": {
+      "status": 200,
+      "body": {
+        "items_per_page": 100,
+        "start_index": 0,
+        "total_results": 1,
+        "active_count": 1,
+        "ceased_count": 0,
+        "links": {
+          "self": "/company/ZZ000003/persons-with-significant-control"
+        },
+        "items": [
+          {
+            "name": "PERSON C",
+            "kind": "individual-person-with-significant-control",
+            "notified_on": "2024-06-13",
+            "ceased": false,
+            "natures_of_control": [
+              "ownership-of-shares-75-to-100-percent",
+              "voting-rights-75-to-100-percent",
+              "right-to-appoint-and-remove-directors"
+            ],
+            "identity_verification_details": {
+              "appointment_verification_statement_date": "2026-06-13",
+              "appointment_verification_statement_due_on": "2026-06-26"
+            }
+          }
+        ]
+      }
+    },
+    "statements": {
+      "status": 404,
+      "body": null
+    },
+    "filing": {
+      "status": 200,
+      "body": {
+        "filing_history_status": "filing-history-available",
+        "items": [
+          {
+            "category": "gazette",
+            "date": "2025-11-13",
+            "description": "gazette-dissolved-compulsory",
+            "pages": 1,
+            "paper_filed": true,
+            "transaction_id": "SYNTH000001",
+            "type": "GAZ2"
+          },
+          {
+            "category": "gazette",
+            "date": "2025-08-28",
+            "description": "gazette-notice-compulsory",
+            "pages": 1,
+            "paper_filed": true,
+            "transaction_id": "SYNTH000002",
+            "type": "GAZ1"
+          },
+          {
+            "action_date": "2024-07-16",
+            "category": "officers",
+            "date": "2024-07-16",
+            "description": "appoint-person-director-company-with-name-date",
+            "pages": 2,
+            "subcategory": "appointments",
+            "transaction_id": "SYNTH000003",
+            "type": "AP01"
+          },
+          {
+            "category": "incorporation",
+            "date": "2024-06-13",
+            "description": "incorporation-company",
+            "pages": 11,
+            "transaction_id": "SYNTH000004",
+            "type": "NEWINC"
+          }
+        ],
+        "items_per_page": 100,
+        "start_index": 0,
+        "total_count": 4
+      }
+    }
+  }
+}

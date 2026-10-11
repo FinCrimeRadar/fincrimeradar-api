@@ -1,0 +1,642 @@
+{
+  "company_number": "ZZ000004",
+  "synthetic": true,
+  "responses": {
+    "profile": {
+      "status": 200,
+      "body": {
+        "accounts": {
+          "accounting_reference_date": {
+            "day": "30",
+            "month": "04"
+          },
+          "last_accounts": {
+            "made_up_to": "2025-02-18",
+            "period_end_on": "2025-02-18",
+            "period_start_on": "2024-02-20",
+            "type": "micro-entity"
+          },
+          "next_accounts": {
+            "due_on": "2026-11-21",
+            "overdue": false,
+            "period_end_on": "2026-02-18",
+            "period_start_on": "2025-02-19"
+          },
+          "next_due": "2026-11-21",
+          "next_made_up_to": "2026-02-18",
+          "overdue": false
+        },
+        "can_file": true,
+        "company_name": "SYNTHETIC COMPANY 4 LIMITED",
+        "company_number": "ZZ000004",
+        "company_status": "active",
+        "confirmation_statement": {
+          "last_made_up_to": "2026-01-29",
+          "next_due": "2027-02-12",
+          "next_made_up_to": "2027-01-29",
+          "overdue": false
+        },
+        "date_of_creation": "2016-01-31",
+        "etag": "2740e6f8cfa0c9b1a6569d00d6bc52df4a6fc46a",
+        "has_charges": false,
+        "has_insolvency_history": false,
+        "jurisdiction": "england-wales",
+        "links": {
+          "persons_with_significant_control": "/company/ZZ000004/persons-with-significant-control",
+          "self": "/company/ZZ000004",
+          "charges": "/company/ZZ000004/charges",
+          "filing_history": "/company/ZZ000004/filing-history",
+          "officers": "/company/ZZ000004/officers"
+        },
+        "previous_company_names": [
+          {
+            "ceased_on": "2016-04-01",
+            "effective_from": "2016-01-31",
+            "name": "SYNTHETIC FORMER NAME LIMITED"
+          }
+        ],
+        "registered_office_address": {
+          "address_line_1": "REDACTED",
+          "address_line_2": "REDACTED",
+          "country": "United Kingdom",
+          "locality": "REDACTED",
+          "postal_code": "REDACTED"
+        },
+        "registered_office_is_in_dispute": false,
+        "sic_codes": [
+          "68209"
+        ],
+        "type": "ltd",
+        "undeliverable_registered_office_address": false,
+        "has_super_secure_pscs": false
+      }
+    },
+    "officers": {
+      "status": 200,
+      "body": {
+        "active_count": 1,
+        "etag": "9c4e0ef93f64ce72b96e3b4df8e23b16454b4c89",
+        "items_per_page": 100,
+        "kind": "officer-list",
+        "links": {
+          "self": "/company/ZZ000004/officers"
+        },
+        "resigned_count": 2,
+        "inactive_count": 0,
+        "start_index": 0,
+        "total_results": 3,
+        "items": [
+          {
+            "name": "PERSON A",
+            "officer_role": "director",
+            "appointed_on": "2020-12-24",
+            "identity_verification_details": {
+              "appointment_verification_end_on": "9999-10-21",
+              "appointment_verification_start_on": "2026-02-12"
+            }
+          },
+          {
+            "name": "PERSON B",
+            "officer_role": "secretary",
+            "appointed_on": "2016-01-31",
+            "resigned_on": "2021-01-27"
+          },
+          {
+            "name": "PERSON B",
+            "officer_role": "director",
+            "appointed_on": "2016-01-31",
+            "resigned_on": "2020-12-24"
+          }
+        ]
+      }
+    },
+    "pscs": {
+      "status": 200,
+      "body": {
+        "items_per_page": 100,
+        "start_index": 0,
+        "total_results": 2,
+        "active_count": 2,
+        "ceased_count": 0,
+        "links": {
+          "self": "/company/ZZ000004/persons-with-significant-control"
+        },
+        "items": [
+          {
+            "name": "PERSON C",
+            "kind": "individual-person-with-significant-control",
+            "notified_on": "2019-01-05",
+            "ceased": false,
+            "natures_of_control": [
+              "ownership-of-shares-25-to-50-percent",
+              "voting-rights-25-to-50-percent",
+              "right-to-appoint-and-remove-directors"
+            ],
+            "identity_verification_details": {
+              "appointment_verification_end_on": "9999-10-21",
+              "appointment_verification_start_on": "2026-02-12"
+            }
+          },
+          {
+            "name": "PERSON D",
+            "kind": "individual-person-with-significant-control",
+            "notified_on": "2016-02-13",
+            "ceased": false,
+            "natures_of_control": [
+              "ownership-of-shares-25-to-50-percent",
+              "voting-rights-25-to-50-percent",
+              "right-to-appoint-and-remove-directors"
+            ],
+            "identity_verification_details": {
+              "appointment_verification_end_on": "9999-10-21",
+              "appointment_verification_start_on": "2025-12-28"
+            }
+          }
+        ]
+      }
+    },
+    "statements": {
+      "status": 404,
+      "body": null
+    },
+    "filing": {
+      "status": 200,
+      "body": {
+        "filing_history_status": "filing-history-available",
+        "items": [
+          {
+            "action_date": "2026-01-29",
+            "category": "confirmation-statement",
+            "date": "2026-02-12",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000001",
+            "type": "CS01"
+          },
+          {
+            "category": "miscellaneous",
+            "date": "2026-02-04",
+            "description": "legacy",
+            "pages": 3,
+            "transaction_id": "SYNTH000002",
+            "type": "RP01PSC01"
+          },
+          {
+            "category": "officers",
+            "date": "2026-02-04",
+            "description": "replacement-filing-of-director-appointment-with-name",
+            "pages": 3,
+            "subcategory": "document-replacement",
+            "transaction_id": "SYNTH000003",
+            "type": "RP01AP01"
+          },
+          {
+            "action_date": "2025-02-18",
+            "category": "accounts",
+            "date": "2025-11-05",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 2,
+            "transaction_id": "SYNTH000004",
+            "type": "AA"
+          },
+          {
+            "action_date": "2025-01-29",
+            "category": "confirmation-statement",
+            "date": "2025-02-20",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000005",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2024-02-19",
+            "category": "accounts",
+            "date": "2024-11-18",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 2,
+            "transaction_id": "SYNTH000006",
+            "type": "AA"
+          },
+          {
+            "action_date": "2024-01-30",
+            "category": "confirmation-statement",
+            "date": "2024-03-10",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000007",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2023-02-18",
+            "category": "accounts",
+            "date": "2023-10-11",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 2,
+            "transaction_id": "SYNTH000008",
+            "type": "AA"
+          },
+          {
+            "action_date": "2023-01-29",
+            "category": "confirmation-statement",
+            "date": "2023-02-12",
+            "description": "confirmation-statement-with-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000009",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2022-02-18",
+            "category": "accounts",
+            "date": "2022-11-07",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 2,
+            "transaction_id": "SYNTH000010",
+            "type": "AA"
+          },
+          {
+            "action_date": "2022-01-29",
+            "category": "confirmation-statement",
+            "date": "2022-02-10",
+            "description": "confirmation-statement-with-updates",
+            "pages": 4,
+            "transaction_id": "SYNTH000011",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2022-02-08",
+            "category": "persons-with-significant-control",
+            "date": "2022-02-08",
+            "description": "change-to-a-person-with-significant-control",
+            "pages": 2,
+            "subcategory": "change",
+            "transaction_id": "SYNTH000012",
+            "type": "PSC04"
+          },
+          {
+            "action_date": "2021-02-18",
+            "category": "accounts",
+            "date": "2021-10-12",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 2,
+            "transaction_id": "SYNTH000013",
+            "type": "AA"
+          },
+          {
+            "category": "mortgage",
+            "date": "2021-07-05",
+            "description": "mortgage-satisfy-charge-full",
+            "pages": 1,
+            "subcategory": "satisfy",
+            "transaction_id": "SYNTH000014",
+            "type": "MR04"
+          },
+          {
+            "category": "mortgage",
+            "date": "2021-06-14",
+            "description": "mortgage-satisfy-charge-full",
+            "pages": 1,
+            "subcategory": "satisfy",
+            "transaction_id": "SYNTH000015",
+            "type": "MR04"
+          },
+          {
+            "action_date": "2021-01-27",
+            "category": "officers",
+            "date": "2021-03-15",
+            "description": "termination-secretary-company-with-name-termination-date",
+            "pages": 1,
+            "subcategory": "termination",
+            "transaction_id": "SYNTH000016",
+            "type": "TM02"
+          },
+          {
+            "action_date": "2021-03-15",
+            "category": "address",
+            "date": "2021-03-15",
+            "description": "change-registered-office-address-company-with-date-old-address-new-address",
+            "pages": 1,
+            "transaction_id": "SYNTH000017",
+            "type": "AD01"
+          },
+          {
+            "action_date": "2020-02-19",
+            "category": "accounts",
+            "date": "2021-02-17",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 2,
+            "transaction_id": "SYNTH000018",
+            "type": "AA"
+          },
+          {
+            "action_date": "2021-01-29",
+            "category": "confirmation-statement",
+            "date": "2021-02-17",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000019",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2020-12-24",
+            "category": "officers",
+            "date": "2020-12-24",
+            "description": "termination-director-company-with-name-termination-date",
+            "pages": 1,
+            "subcategory": "termination",
+            "transaction_id": "SYNTH000020",
+            "type": "TM01"
+          },
+          {
+            "action_date": "2020-12-24",
+            "category": "officers",
+            "date": "2020-12-24",
+            "description": "appoint-person-director-company-with-name-date",
+            "pages": 3,
+            "paper_filed": true,
+            "subcategory": "appointments",
+            "transaction_id": "SYNTH000021",
+            "type": "AP01"
+          },
+          {
+            "action_date": "2020-01-30",
+            "category": "confirmation-statement",
+            "date": "2020-02-09",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000022",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2019-02-18",
+            "category": "accounts",
+            "date": "2019-11-20",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 5,
+            "transaction_id": "SYNTH000023",
+            "type": "AA"
+          },
+          {
+            "action_date": "2019-06-23",
+            "category": "mortgage",
+            "date": "2019-06-23",
+            "description": "mortgage-create-with-deed-with-charge-number-charge-creation-date",
+            "pages": 38,
+            "subcategory": "create",
+            "transaction_id": "SYNTH000024",
+            "type": "MR01"
+          },
+          {
+            "category": "mortgage",
+            "date": "2019-06-23",
+            "description": "mortgage-satisfy-charge-full",
+            "pages": 1,
+            "subcategory": "satisfy",
+            "transaction_id": "SYNTH000025",
+            "type": "MR04"
+          },
+          {
+            "action_date": "2019-06-05",
+            "category": "mortgage",
+            "date": "2019-06-05",
+            "description": "mortgage-create-with-deed-with-charge-number-charge-creation-date",
+            "pages": 43,
+            "subcategory": "create",
+            "transaction_id": "SYNTH000026",
+            "type": "MR01"
+          },
+          {
+            "action_date": "2019-01-29",
+            "category": "confirmation-statement",
+            "date": "2019-03-24",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000027",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2019-01-05",
+            "category": "persons-with-significant-control",
+            "date": "2019-03-24",
+            "description": "notification-of-a-person-with-significant-control",
+            "pages": 3,
+            "paper_filed": true,
+            "subcategory": "notifications",
+            "transaction_id": "SYNTH000028",
+            "type": "PSC01"
+          },
+          {
+            "action_date": "2018-02-18",
+            "category": "accounts",
+            "date": "2018-11-19",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 5,
+            "transaction_id": "SYNTH000029",
+            "type": "AA"
+          },
+          {
+            "action_date": "2018-01-29",
+            "category": "confirmation-statement",
+            "date": "2018-04-14",
+            "description": "confirmation-statement-with-no-updates",
+            "pages": 3,
+            "transaction_id": "SYNTH000030",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2018-01-02",
+            "category": "address",
+            "date": "2018-01-02",
+            "description": "change-registered-office-address-company-with-date-old-address-new-address",
+            "pages": 1,
+            "transaction_id": "SYNTH000031",
+            "type": "AD01"
+          },
+          {
+            "action_date": "2017-02-18",
+            "category": "accounts",
+            "date": "2017-11-01",
+            "description": "accounts-with-accounts-type-micro-entity",
+            "pages": 5,
+            "transaction_id": "SYNTH000032",
+            "type": "AA"
+          },
+          {
+            "action_date": "2017-01-29",
+            "category": "confirmation-statement",
+            "date": "2017-03-16",
+            "description": "confirmation-statement-with-updates",
+            "pages": 5,
+            "transaction_id": "SYNTH000033",
+            "type": "CS01"
+          },
+          {
+            "action_date": "2016-04-28",
+            "category": "mortgage",
+            "date": "2016-04-28",
+            "description": "mortgage-create-with-deed-with-charge-number-charge-creation-date",
+            "pages": 23,
+            "subcategory": "create",
+            "transaction_id": "SYNTH000034",
+            "type": "MR01"
+          },
+          {
+            "category": "resolution",
+            "date": "2016-04-01",
+            "description": "resolution",
+            "pages": 3,
+            "subcategory": "certificate",
+            "transaction_id": "SYNTH000035",
+            "type": "RESOLUTIONS"
+          },
+          {
+            "category": "incorporation",
+            "date": "2016-01-31",
+            "description": "incorporation-company",
+            "pages": 27,
+            "transaction_id": "SYNTH000036",
+            "type": "NEWINC"
+          }
+        ],
+        "items_per_page": 100,
+        "start_index": 0,
+        "total_count": 36
+      }
+    },
+    "charges": {
+      "status": 200,
+      "body": {
+        "etag": "c8b0785d970f87c3c5dbf0fba04620c0477a973f",
+        "items": [
+          {
+            "charge_code": "ZZ0000040003",
+            "charge_number": 3,
+            "classification": {
+              "description": "A registered charge",
+              "type": "charge-description"
+            },
+            "created_on": "2019-06-23",
+            "delivered_on": "2019-06-23",
+            "etag": "f1abb811548e8d89e9704ad7c77ab3e578a1294b",
+            "particulars": {
+              "contains_fixed_charge": true,
+              "contains_floating_charge": true,
+              "contains_negative_pledge": true,
+              "description": "SYNTHETIC PARTICULARS OF CHARGE.",
+              "type": "brief-description"
+            },
+            "persons_entitled": [
+              {
+                "name": "CHARGEE A"
+              }
+            ],
+            "satisfied_on": "2021-07-05",
+            "status": "fully-satisfied",
+            "transactions": [
+              {
+                "delivered_on": "2019-06-23",
+                "filing_type": "create-charge-with-deed",
+                "links": {
+                  "filing": "/company/ZZ000004/filing-history/SYNTH000024"
+                }
+              },
+              {
+                "delivered_on": "2021-07-05",
+                "filing_type": "charge-satisfaction",
+                "links": {
+                  "filing": "/company/ZZ000004/filing-history/SYNTH000014"
+                }
+              }
+            ]
+          },
+          {
+            "charge_code": "ZZ0000040002",
+            "charge_number": 2,
+            "classification": {
+              "description": "A registered charge",
+              "type": "charge-description"
+            },
+            "created_on": "2019-06-05",
+            "delivered_on": "2019-06-05",
+            "etag": "f2c9c850c351e8601ce5a8e2565690b7b5ceb128",
+            "particulars": {
+              "contains_fixed_charge": true,
+              "contains_floating_charge": true,
+              "contains_negative_pledge": true,
+              "description": "SYNTHETIC PARTICULARS OF CHARGE.",
+              "floating_charge_covers_all": true,
+              "type": "brief-description"
+            },
+            "persons_entitled": [
+              {
+                "name": "CHARGEE A"
+              }
+            ],
+            "satisfied_on": "2021-06-14",
+            "status": "fully-satisfied",
+            "transactions": [
+              {
+                "delivered_on": "2019-06-05",
+                "filing_type": "create-charge-with-deed",
+                "links": {
+                  "filing": "/company/ZZ000004/filing-history/SYNTH000026"
+                }
+              },
+              {
+                "delivered_on": "2021-06-14",
+                "filing_type": "charge-satisfaction",
+                "links": {
+                  "filing": "/company/ZZ000004/filing-history/SYNTH000015"
+                }
+              }
+            ]
+          },
+          {
+            "charge_code": "ZZ0000040001",
+            "charge_number": 1,
+            "classification": {
+              "description": "A registered charge",
+              "type": "charge-description"
+            },
+            "created_on": "2016-04-28",
+            "delivered_on": "2016-04-28",
+            "etag": "53e98a2153863a6f7525b8de68ae80ab12343166",
+            "particulars": {
+              "contains_floating_charge": true,
+              "contains_negative_pledge": true,
+              "description": "SYNTHETIC PARTICULARS OF CHARGE.",
+              "floating_charge_covers_all": true,
+              "type": "brief-description"
+            },
+            "persons_entitled": [
+              {
+                "name": "PERSON C"
+              }
+            ],
+            "satisfied_on": "2019-06-23",
+            "status": "fully-satisfied",
+            "transactions": [
+              {
+                "delivered_on": "2016-04-28",
+                "filing_type": "create-charge-with-deed",
+                "links": {
+                  "filing": "/company/ZZ000004/filing-history/SYNTH000034"
+                }
+              },
+              {
+                "delivered_on": "2019-06-23",
+                "filing_type": "charge-satisfaction",
+                "links": {
+                  "filing": "/company/ZZ000004/filing-history/SYNTH000025"
+                }
+              }
+            ]
+          }
+        ],
+        "part_satisfied_count": 0,
+        "satisfied_count": 3,
+        "total_count": 3,
+        "unfiltered_count": 3
+      }
+    }
+  }
+}

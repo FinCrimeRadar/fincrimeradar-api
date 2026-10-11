@@ -1,0 +1,57 @@
+{
+  "items_per_page": "100",
+  "start_index": "0",
+  "total_results": 2,
+  "active_count": 2,
+  "ceased_count": 0,
+  "items": [
+    {
+      "name": "SMITH, Alex",
+      "kind": "individual-person-with-significant-control",
+      "notified_on": "2019-03-04",
+      "ceased": false,
+      "date_of_birth": {
+        "month": 2,
+        "year": 1975,
+        "marker": "PII_DOB_MARKER"
+      },
+      "nationality": "PII_NATIONALITY_MARKER",
+      "country_of_residence": "PII_RESIDENCE_MARKER",
+      "address": {
+        "address_line_1": "PII_ADDRESS_MARKER"
+      },
+      "natures_of_control": [
+        "ownership-of-shares-75-to-100-percent"
+      ],
+      "links": {
+        "self": "http://evil.example/psc/steal"
+      },
+      "identity_verification_details": {
+        "appointment_verification_statement_date": "2025-11-01",
+        "appointment_verification_statement_due_on": "2026-12-01"
+      }
+    },
+    {
+      "name": "EXAMPLE HOLDINGS LIMITED",
+      "kind": "corporate-entity-person-with-significant-control",
+      "notified_on": "2019-03-04",
+      "ceased": false,
+      "date_of_birth": {
+        "month": 2,
+        "year": 1975,
+        "marker": "PII_DOB_MARKER"
+      },
+      "nationality": "PII_NATIONALITY_MARKER",
+      "country_of_residence": "PII_RESIDENCE_MARKER",
+      "address": {
+        "address_line_1": "PII_ADDRESS_MARKER"
+      },
+      "natures_of_control": [
+        "ownership-of-shares-75-to-100-percent"
+      ],
+      "links": {
+        "self": "http://evil.example/psc/steal"
+      }
+    }
+  ]
+}
