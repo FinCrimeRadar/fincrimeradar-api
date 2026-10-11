@@ -91,7 +91,7 @@
             "officer_role": "director",
             "appointed_on": "2020-12-24",
             "identity_verification_details": {
-              "appointment_verification_end_on": "9999-10-21",
+              "appointment_verification_end_on": "9999-12-31",
               "appointment_verification_start_on": "2026-02-12"
             }
           },
@@ -133,7 +133,7 @@
               "right-to-appoint-and-remove-directors"
             ],
             "identity_verification_details": {
-              "appointment_verification_end_on": "9999-10-21",
+              "appointment_verification_end_on": "9999-12-31",
               "appointment_verification_start_on": "2026-02-12"
             }
           },
@@ -148,7 +148,7 @@
               "right-to-appoint-and-remove-directors"
             ],
             "identity_verification_details": {
-              "appointment_verification_end_on": "9999-10-21",
+              "appointment_verification_end_on": "9999-12-31",
               "appointment_verification_start_on": "2025-12-28"
             }
           }

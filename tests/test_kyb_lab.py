@@ -1628,6 +1628,7 @@ SYNTHETIC = [
     "active_ltd_outstanding_charges",
     "dissolved",
     "active_registered_office_change",
+    "open_ended_verification",
 ]
 SYNTHETIC_KEYS = {
     "profile": "profile",
@@ -2333,3 +2334,163 @@ def test_1000_random_addresses_in_one_slash_64_share_one_limit(ctx):
     assert codes[:10] == [200] * 10
     assert set(codes[10:]) == {429}
     assert list(kyb._ip_log) == ["2001:db8:1:2::/64"]
+
+
+# ------------------------------------------------------------------ spec v1.8: open ended verification end date
+
+START = "2026-06-17"
+
+
+@pytest.mark.parametrize("is_psc", [False, True])
+def test_end_9999_12_31_with_start_is_statement_supplied(is_psc):
+    d = D(
+        appointment_verification_start_on=START,
+        appointment_verification_end_on="9999-12-31",
+    )
+    assert derive_idv_status(d, is_psc=is_psc, today=TODAY) == "statement_supplied"
+
+
+@pytest.mark.parametrize("is_psc", [False, True])
+def test_end_9999_12_31_without_start_is_still_a_conflict(is_psc):
+    # An end date with no start date is inconsistent, so the open end is not applied.
+    d = D(appointment_verification_end_on="9999-12-31")
+    assert (
+        derive_idv_status(d, is_psc=is_psc, today=TODAY) == "verification_data_conflict"
+    )
+
+
+def test_end_9999_12_31_without_start_stays_a_conflict_whatever_the_due_date():
+    for due in ("2026-12-01", "2026-09-01"):
+        d = D(
+            appointment_verification_end_on="9999-12-31",
+            appointment_verification_statement_due_on=due,
+        )
+        assert (
+            derive_idv_status(d, is_psc=False, today=TODAY)
+            == "verification_data_conflict"
+        )
+
+
+@pytest.mark.parametrize("is_psc", [False, True])
+def test_start_with_end_9999_12_31_and_a_past_due_date_is_statement_supplied(is_psc):
+    d = D(
+        appointment_verification_start_on=START,
+        appointment_verification_end_on="9999-12-31",
+        appointment_verification_statement_due_on="2026-09-01",
+    )
+    assert derive_idv_status(d, is_psc=is_psc, today=TODAY) == "statement_supplied"
+
+
+@pytest.mark.parametrize("raw", ["99991231", "9999-12-31 ", "9999-12-31T00:00:00"])
+def test_only_the_exact_raw_string_is_the_open_end(raw):
+    # date.fromisoformat accepts the basic format, so the match must be on the raw string.
+    d = D(appointment_verification_start_on=START, appointment_verification_end_on=raw)
+    assert (
+        derive_idv_status(d, is_psc=False, today=TODAY) == "verification_data_conflict"
+    )
+
+
+@pytest.mark.parametrize("today", [date(2026, 10, 11), date(2030, 1, 1)])
+def test_the_open_end_does_not_depend_on_today(today):
+    d = D(
+        appointment_verification_start_on=START,
+        appointment_verification_end_on="9999-12-31",
+    )
+    assert derive_idv_status(d, is_psc=False, today=today) == "statement_supplied"
+    future = D(
+        appointment_verification_start_on=START,
+        appointment_verification_end_on="2099-01-01",
+    )
+    assert (
+        derive_idv_status(future, is_psc=False, today=today)
+        == "verification_data_conflict"
+    )
+
+
+def test_an_end_date_in_the_past_is_a_removal_not_a_conflict_when_today_passes_it():
+    d = D(
+        appointment_verification_start_on=START,
+        appointment_verification_end_on="2099-01-01",
+    )
+    assert (
+        derive_idv_status(d, is_psc=False, today=date(2100, 1, 1))
+        == "statement_removed"
+    )
+
+
+def test_open_ended_end_does_not_trigger_the_due_after_end_conflict():
+    d = D(
+        appointment_verification_start_on=START,
+        appointment_verification_end_on="9999-12-31",
+        appointment_verification_statement_due_on="2026-12-01",
+    )
+    assert derive_idv_status(d, is_psc=False, today=TODAY) == "statement_supplied"
+
+
+@pytest.mark.parametrize("is_psc", [False, True])
+def test_other_future_end_dates_stay_a_conflict(is_psc):
+    for end in ("2099-01-01", "9999-12-30", "9999-01-01", "2026-10-12"):
+        d = D(
+            appointment_verification_start_on=START, appointment_verification_end_on=end
+        )
+        assert (
+            derive_idv_status(d, is_psc=is_psc, today=TODAY)
+            == "verification_data_conflict"
+        ), end
+
+
+def test_end_before_start_is_still_a_conflict():
+    d = D(
+        appointment_verification_start_on="2026-05-01",
+        appointment_verification_end_on="2026-04-01",
+    )
+    assert (
+        derive_idv_status(d, is_psc=False, today=TODAY) == "verification_data_conflict"
+    )
+
+
+def test_future_start_with_open_ended_end_is_still_a_conflict():
+    d = D(
+        appointment_verification_start_on="2026-10-12",
+        appointment_verification_end_on="9999-12-31",
+    )
+    assert (
+        derive_idv_status(d, is_psc=False, today=TODAY) == "verification_data_conflict"
+    )
+
+
+def test_open_ended_end_replay_and_raw_evidence(ctx):
+    n, routes = synthetic_routes(synthetic_bundle("open_ended_verification"))
+    ctx.install(routes=routes)
+    body = ctx.body(n)
+    got = {o["name"]: o["identity_verification"] for o in body["officers"]["items"]}
+    assert got["PERSON A"]["status"] == "statement_supplied"
+    assert got["PERSON B"]["status"] == "verification_data_conflict"
+    assert got["PERSON D"]["status"] == "verification_data_conflict"
+    assert got["PERSON E"]["status"] == "verification_data_conflict"
+    assert (
+        body["pscs"]["items"][0]["identity_verification"]["status"]
+        == "statement_supplied"
+    )
+    # The register value is still shown exactly as returned.
+    assert (
+        got["PERSON A"]["evidence"]["appointment_verification_end_on"] == "9999-12-31"
+    )
+    assert got["PERSON A"]["display"] == (
+        "The register records that an identity verification statement was supplied "
+        f"for this role on {START}, linking a verified identity to it."
+    )
+    ids = indicator_ids(body)
+    assert "idv_statement_removed" not in ids and "idv_statement_overdue" not in ids
+
+
+def test_open_ended_end_on_a_removed_officer_and_a_ceased_psc_is_not_interpreted(ctx):
+    n, routes = synthetic_routes(synthetic_bundle("open_ended_verification"))
+    ctx.install(routes=routes)
+    body = ctx.body(n)
+    officer = next(o for o in body["officers"]["items"] if o["name"] == "PERSON F")
+    psc = next(p for p in body["pscs"]["items"] if p["name"] == "PERSON G")
+    for rec in (officer, psc):
+        iv = rec["identity_verification"]
+        assert iv["eligibility"] == "not_interpreted" and iv["status"] is None
+        assert iv["evidence"]["appointment_verification_end_on"] == "9999-12-31"

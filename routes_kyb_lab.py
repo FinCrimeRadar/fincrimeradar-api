@@ -730,6 +730,14 @@ def normalise_company_number(raw: str) -> str | None:
 # ---------------------------------------------------------------- derivation
 
 
+# Spec v1.8, section 5.2: the register returns this exact string in
+# appointment_verification_end_on alongside a start date, and the register's own
+# officers page shows those appointments as verified. Companies House does not
+# document the value in the API specification, so the rule is limited to this
+# one raw string (never the parsed date), and only when a start date is present.
+OPEN_ENDED_VERIFICATION_END = "9999-12-31"
+
+
 def _parse_date(value: str | None) -> date | None:
     return date.fromisoformat(value) if value else None
 
@@ -744,7 +752,11 @@ def derive_idv_status(
     "verification_data_conflict",
     "no_statement_status_fields",
 ]:
-    """Spec section 5.2. First match wins, row a (conflict) first."""
+    """Spec section 5.2. First match wins, row a (conflict) first.
+
+    An end date of exactly 9999-12-31 (raw string) is treated as absent when a
+    start date is present (spec v1.8). Without a start it stays a conflict.
+    """
     d = d or UpIdv()
     try:
         start = _parse_date(d.appointment_verification_start_on)
@@ -756,6 +768,8 @@ def derive_idv_status(
     except ValueError:
         # A date the register returned that is not a date is inconsistent data.
         return "verification_data_conflict"
+    if start and d.appointment_verification_end_on == OPEN_ENDED_VERIFICATION_END:
+        end = None  # no end: treated as absent before every conflict check
     if (
         (start and start > today)
         or (end and end > today)

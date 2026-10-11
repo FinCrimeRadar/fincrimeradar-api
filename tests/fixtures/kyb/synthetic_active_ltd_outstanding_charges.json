@@ -83,7 +83,7 @@
             "officer_role": "director",
             "appointed_on": "2024-06-16",
             "identity_verification_details": {
-              "appointment_verification_end_on": "9999-12-08",
+              "appointment_verification_end_on": "9999-12-31",
               "appointment_verification_start_on": "2026-06-17"
             }
           },
@@ -92,7 +92,7 @@
             "officer_role": "director",
             "appointed_on": "2024-06-16",
             "identity_verification_details": {
-              "appointment_verification_end_on": "9999-12-08",
+              "appointment_verification_end_on": "9999-12-31",
               "appointment_verification_start_on": "2026-06-17"
             }
           }
@@ -122,7 +122,7 @@
               "right-to-appoint-and-remove-directors"
             ],
             "identity_verification_details": {
-              "appointment_verification_end_on": "9999-12-08",
+              "appointment_verification_end_on": "9999-12-31",
               "appointment_verification_start_on": "2026-06-16"
             }
           },
@@ -137,7 +137,7 @@
               "right-to-appoint-and-remove-directors"
             ],
             "identity_verification_details": {
-              "appointment_verification_end_on": "9999-12-08",
+              "appointment_verification_end_on": "9999-12-31",
               "appointment_verification_start_on": "2026-06-16"
             }
           }
