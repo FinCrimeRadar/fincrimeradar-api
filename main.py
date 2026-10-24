@@ -107,7 +107,7 @@ async def startup():
     if not SCREENING_ENABLED:
         print("Screening is DISABLED (SCREENING_ENABLED is not true), /api/screen returns 503.")
     elif not OPENSANCTIONS_API_KEY:
-        print("WARNING: OPENSANCTIONS_API_KEY is not set, screening is unavailable and will return no results")
+        print("WARNING: OPENSANCTIONS_API_KEY is not set, sanctions/PEP screening will return no results")
     else:
         print("OpenSanctions API key configured, screening ready.")
 

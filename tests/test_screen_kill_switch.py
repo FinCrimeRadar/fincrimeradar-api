@@ -73,7 +73,8 @@ def test_startup_enabled_with_key_says_ready(monkeypatch, capsys):
 
 def test_startup_enabled_without_key_warns_unavailable(monkeypatch, capsys):
     out = _startup_log(monkeypatch, capsys, True, "")
-    assert "WARNING" in out and "unavailable" in out
+    assert "WARNING: OPENSANCTIONS_API_KEY is not set" in out
+    assert "sanctions/PEP screening will return no results" in out
     assert "ready" not in out
 
 
