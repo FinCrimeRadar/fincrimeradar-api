@@ -50,3 +50,41 @@ def test_disabled_requests_skip_rate_limiter(client):
 
 def test_health_reports_screening_disabled(client):
     assert client.get("/api/health").json()["screening_enabled"] is False
+
+
+def _startup_log(monkeypatch, capsys, enabled, key):
+    import asyncio
+
+    monkeypatch.setattr(main, "SCREENING_ENABLED", enabled)
+    monkeypatch.setattr(main, "OPENSANCTIONS_API_KEY", key)
+    asyncio.run(main.startup())
+    return capsys.readouterr().out
+
+
+def test_startup_disabled_with_key_says_disabled_not_ready(monkeypatch, capsys):
+    out = _startup_log(monkeypatch, capsys, False, "k")
+    assert "DISABLED" in out
+    assert "ready" not in out
+
+
+def test_startup_enabled_with_key_says_ready(monkeypatch, capsys):
+    assert "screening ready" in _startup_log(monkeypatch, capsys, True, "k")
+
+
+def test_startup_enabled_without_key_warns_unavailable(monkeypatch, capsys):
+    out = _startup_log(monkeypatch, capsys, True, "")
+    assert "WARNING" in out and "unavailable" in out
+    assert "ready" not in out
+
+
+def test_status_disabled_does_not_claim_live(client):
+    data = client.get("/api/status").json()["data"]
+    assert data["screening_enabled"] is False
+    assert "live per-request" not in data["screening_backend"]
+
+
+def test_status_enabled_reports_live(client, monkeypatch):
+    monkeypatch.setattr(main, "SCREENING_ENABLED", True)
+    data = client.get("/api/status").json()["data"]
+    assert data["screening_enabled"] is True
+    assert "live per-request" in data["screening_backend"]
