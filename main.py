@@ -1,3 +1,4 @@
+import os
 import time
 from collections import deque
 from fastapi import FastAPI, Query, HTTPException, Request
@@ -57,6 +58,16 @@ adverse_engine = AdverseMediaEngine()
 # Revisit once this endpoint has its own real usage data. Same in-memory,
 # single-process, resets-on-restart tradeoff already accepted for
 # /api/chat and /scenario-lab/cases.
+# Kill switch for /api/screen, added 24 October 2026 after OpenSanctions
+# billing ran far above expectation. Fail closed: screening is OFF unless
+# SCREENING_ENABLED is explicitly "true" in the environment, so deploying this
+# commit stops every billed upstream call without any Render variable change.
+# Re-enable by setting SCREENING_ENABLED=true on Render and restarting.
+SCREENING_ENABLED = os.environ.get("SCREENING_ENABLED", "").strip().lower() == "true"
+SCREENING_MAINTENANCE_DETAIL = (
+    "Screening is temporarily unavailable while the service is under maintenance."
+)
+
 SCREEN_RATE_LIMIT_MAX = 20
 SCREEN_RATE_LIMIT_WINDOW_SECONDS = 60 * 60
 
@@ -109,6 +120,15 @@ def screen(
     type: str = Query("all", description="all | sanctions | pep | adverse"),
     threshold: int = Query(80, ge=50, le=100, description="Match threshold 50-100")
 ):
+    # Checked before the rate limiter and before any upstream call, so a
+    # disabled service never reaches OpenSanctions or the RSS fetchers.
+    if not SCREENING_ENABLED:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": SCREENING_MAINTENANCE_DETAIL, "maintenance": True},
+            headers={"Retry-After": "86400"},
+        )
+
     if _screen_rate_limited(request):
         raise HTTPException(
             status_code=429,
@@ -173,6 +193,7 @@ def health():
     return {
         "status": "ok",
         "screening_backend": "opensanctions_api",
+        "screening_enabled": SCREENING_ENABLED,
         "api_key_configured": bool(OPENSANCTIONS_API_KEY),
         "sar_sandbox": sar_sandbox_load_status(),
         **kyb_lab_health_fields(),
