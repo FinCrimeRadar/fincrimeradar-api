@@ -104,7 +104,9 @@ async def startup():
     # whether the API key is actually configured, since a missing key would
     # otherwise fail silently on the first real search instead of being
     # visible in the startup log.
-    if not OPENSANCTIONS_API_KEY:
+    if not SCREENING_ENABLED:
+        print("Screening is DISABLED (SCREENING_ENABLED is not true), /api/screen returns 503.")
+    elif not OPENSANCTIONS_API_KEY:
         print("WARNING: OPENSANCTIONS_API_KEY is not set, sanctions/PEP screening will return no results")
     else:
         print("OpenSanctions API key configured, screening ready.")
@@ -206,9 +208,14 @@ def status():
         "version": "1.0.0",
         "status": "live",
         "data": {
-            "screening_backend": "OpenSanctions authenticated /match/default API, "
-                                  "live per-request, no bulk dataset held locally, "
-                                  "no cache to go stale.",
+            "screening_enabled": SCREENING_ENABLED,
+            "screening_backend": (
+                "OpenSanctions authenticated /match/default API, "
+                "live per-request, no bulk dataset held locally, "
+                "no cache to go stale."
+                if SCREENING_ENABLED
+                else "Screening is disabled, no OpenSanctions calls are made."
+            ),
             "api_key_configured": bool(OPENSANCTIONS_API_KEY),
             "sanctions_coverage": "Full OpenSanctions default collection, sanctions "
                                    "and PEP, split by topic per result. See methodology.html.",
